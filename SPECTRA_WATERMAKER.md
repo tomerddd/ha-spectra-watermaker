@@ -238,13 +238,13 @@ Idle pages vary by model/firmware (pages 4, 37, 39, 40, 48, 49). Check `label0` 
 **Fill Tank mode** (1500ms between each step):
 ```
 {"page":"10","cmd":"BUTTON0"}   # Clear screensaver (if active)
-{"page":"4","cmd":"BUTTON1"}    # Press Start
+{"page":"4","cmd":"BUTTON1"}    # Press START
 {"page":"37","cmd":"BUTTON0"}   # Select "Fill Tank"
 ```
 
 **Autofill with quantity** (1500ms between each step):
 ```
-{"page":"4","cmd":"BUTTON1"}    # Press Start
+{"page":"4","cmd":"BUTTON1"}    # Press START
 {"page":"37","cmd":"BUTTON1"}   # Select Autofill
 {"page":"29","cmd":"BUTTON1"}   # Select liters (or BUTTON2 for hours)
 {"page":"29","cmd":"LABEL0"}    # Confirm selection
@@ -252,10 +252,20 @@ Idle pages vary by model/firmware (pages 4, 37, 39, 40, 48, 49). Check `label0` 
 {"page":"29","cmd":"BUTTON3"}   # Apply and start
 ```
 
-**Stop** (single command):
+**Manual flush from idle** (single command):
+```
+{"page":"4","cmd":"BUTTON0"}    # Press FRESH WATER FLUSH
+```
+
+**Stop** (single command, works from running or flushing):
 ```
 {"page":"<cur>","cmd":"BUTTON0"}
 ```
+
+**Confirmed idle page 4 button mapping:**
+- `BUTTON0` = Fresh Water Flush
+- `BUTTON1` = Start
+- `BUTTON2` = Stop (no-op when idle)
 
 ---
 
@@ -477,6 +487,8 @@ The integration should be configurable entirely through the HA UI (config flow),
 | `sensor.spectra_elapsed_time` | from port 9000 | — | `duration` |
 | `sensor.spectra_remaining_time` | from port 9000 | — | `duration` |
 | `sensor.spectra_flush_remaining` | from port 9000 | — | `duration` |
+| `sensor.spectra_flush_progress` | from port 9000 page 2 gauge0 | % | — |
+| `sensor.spectra_autostore_countdown` | from port 9000 page 4 label1 | — | `duration` |
 
 **Maintenance sensors**:
 
@@ -567,12 +579,47 @@ The integration should be configurable entirely through the HA UI (config flow),
 ### Flush Phase
 
 After stop (manual or timer/tank-full auto-stop), the watermaker enters a **freshwater flush** cycle:
-- Duration: 3–10 minutes (timer countdown shown on port 9000)
+- **Page 2** — a distinct page, not part of the running or idle page sets
+- `label0`: `"FLUSH"`
+- `label1`: `"Remaining time : 8m"` (text with remaining time)
+- `gauge0`: progress percentage (0 → 100), NOT a countdown timer
+- `button0`: `"STOP"` — user can abort flush (not recommended)
+- Duration: ~8 minutes observed (may vary 3–10 min)
 - Power draw drops noticeably (lower than running, higher than idle) — this is how the existing power-based template detects it
-- The system transitions to idle automatically when flush completes
-- Port 9000 `label0` will contain `FLUSH` during this phase
+- The system transitions to **page 4 (idle)** automatically when flush completes
 - **Do not cut power during flush** — the flush protects the membranes. The integration should block outlet-off until flush completes or a safety timeout elapses.
 - After flush completes and system reaches idle, it is safe to power off the outlet.
+
+### Idle Page (Page 4) — Confirmed Layout
+
+After a run completes (or on boot), the system shows page 4:
+
+```json
+{
+  "page": "4",
+  "button0": "FRESH WATER FLUSH",
+  "button1": "START",
+  "button2": "STOP",
+  "label0": "NEWPORT 1000",
+  "label1": "Autostore : 29d 23h 59m",
+  "label2": "Tank Level",
+  "label4": "",
+  "gauge0": "0",
+  "gauge0_label": "!",
+  "logout_button": "0",
+  "tank": "1055"
+}
+```
+
+**Buttons on idle page 4:**
+- `button0` = **FRESH WATER FLUSH** (manual flush)
+- `button1` = **START** (begin production)
+- `button2` = **STOP** (no-op when already idle)
+
+**Data on idle page 4:**
+- `label0` = device model name ("NEWPORT 1000")
+- `label1` = autostore countdown ("Autostore : 29d 23h 59m") — days until next scheduled chemical preservation flush
+- `gauge0` / `gauge0_label` = tank level (shows "!" when not connected)
 
 ### Power Management Integration
 

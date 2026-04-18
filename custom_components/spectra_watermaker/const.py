@@ -39,6 +39,7 @@ STOP_REASON_ERROR = "error"
 
 # Spectra page IDs (running)
 PAGES_RUNNING = {"5", "6", "30", "31", "32"}
+PAGES_FLUSHING = {"2"}
 PAGES_IDLE = {"4", "37", "39", "40", "48", "49"}
 PAGES_PROMPT = {"1", "10", "14", "43", "44", "45"}
 
