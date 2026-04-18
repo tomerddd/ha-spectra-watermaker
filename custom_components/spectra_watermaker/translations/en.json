@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Spectra Watermaker",
-        "description": "Enter the IP address of your Spectra Connect WiFi module.",
+        "description": "Enter the IP address of your Spectra Connect module.",
         "data": {
           "host": "IP Address"
         },

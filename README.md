@@ -2,7 +2,7 @@
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
-Home Assistant integration for **Spectra Watermakers** equipped with the [Spectra Connect](https://spectrawatermakers.com) WiFi module. Provides full monitoring and control via the watermaker's WebSocket interface — no cloud, no polling, pure local push.
+Home Assistant integration for **Spectra Watermakers** equipped with the [Spectra Connect](https://spectrawatermakers.com) module (built-in Ethernet on Newport 1000/400c, or external module on other models). Provides full monitoring and control via the watermaker's WebSocket interface — no cloud, no polling, pure local push.
 
 Tested with the **Spectra Newport 1000**. Should work with other Spectra models using the Spectra Connect module (Newport 400c, Catalina, Ventura, etc.).
 
@@ -46,7 +46,7 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
 
 1. Go to **Settings** > **Devices & Services**
 2. Click **Add Integration** and search for **Spectra Watermaker Assistant**
-3. Enter the IP address of your Spectra Connect WiFi module
+3. Enter the IP address of your Spectra Connect module
 4. (Optional) Configure:
    - **Power outlet switch** — a switch entity that controls power to the watermaker
    - **Power consumption sensor** — for secondary state detection (watts)
@@ -107,7 +107,7 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
 
 ## How It Works
 
-The Spectra Connect WiFi module exposes two WebSocket endpoints on the local network:
+The Spectra Connect module exposes two WebSocket endpoints on the local network:
 
 - **Port 9000** — UI stream (mirrors the touchscreen display). Used for state detection and sending control commands.
 - **Port 9001** — Data stream. Provides raw sensor readings ~1/second as JSON.
@@ -166,7 +166,7 @@ Access via the `spectra_watermaker.get_run_history` service call for dashboards 
 | Spectra Ventura series | Expected to work |
 | Other Spectra Connect models | Should work — please report |
 
-Requires the **Spectra Connect WiFi module** (the module that provides the web interface at the watermaker's IP address).
+Requires the **Spectra Connect module** (the module that provides the web interface at the watermaker's IP address).
 
 ## Troubleshooting
 
