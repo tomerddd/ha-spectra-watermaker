@@ -1,0 +1,13 @@
+{
+  "domain": "spectra_watermaker",
+  "name": "Spectra Watermaker Assistant",
+  "version": "0.1.0",
+  "documentation": "https://github.com/deepplaya/ha-spectra-watermaker",
+  "issue_tracker": "https://github.com/deepplaya/ha-spectra-watermaker/issues",
+  "codeowners": ["@deepplaya"],
+  "dependencies": [],
+  "requirements": ["websockets>=12.0"],
+  "config_flow": true,
+  "iot_class": "local_push",
+  "integration_type": "hub"
+}

@@ -1,0 +1,133 @@
+"""Config flow for Spectra Watermaker Assistant."""
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+import voluptuous as vol
+
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.helpers import selector
+
+from .const import (
+    DOMAIN,
+    CONF_HOST,
+    CONF_POWER_SWITCH,
+    CONF_POWER_SENSOR,
+    CONF_TANK_SENSOR_PORT,
+    CONF_TANK_SENSOR_STBD,
+    CONF_TANK_FULL_THRESHOLD,
+    DEFAULT_TANK_FULL_THRESHOLD,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class SprectraWatermakerConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Spectra Watermaker Assistant."""
+
+    VERSION = 1
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 1: Watermaker IP address."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            host = user_input[CONF_HOST]
+
+            # Prevent duplicate entries for same host
+            self._async_abort_entries_match({CONF_HOST: host})
+
+            # Validate: try to connect to WebSocket
+            try:
+                import websockets
+
+                uri = f"ws://{host}:9001"
+                async with websockets.connect(
+                    uri,
+                    subprotocols=["dumb-increment-protocol"],
+                    open_timeout=5,
+                ) as ws:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                    import json
+
+                    data = json.loads(msg)
+                    device_name = data.get("device", "Spectra Watermaker")
+            except Exception:
+                _LOGGER.exception("Failed to connect to Spectra at %s", host)
+                errors["base"] = "cannot_connect"
+            else:
+                # Store host and device name, move to options step
+                self._host = host
+                self._device_name = device_name
+                return await self.async_step_options()
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST): str,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_options(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2: Optional power outlet and tank sensors."""
+        if user_input is not None:
+            # Merge with host from step 1
+            data = {
+                CONF_HOST: self._host,
+                CONF_POWER_SWITCH: user_input.get(CONF_POWER_SWITCH),
+                CONF_POWER_SENSOR: user_input.get(CONF_POWER_SENSOR),
+                CONF_TANK_SENSOR_PORT: user_input.get(CONF_TANK_SENSOR_PORT),
+                CONF_TANK_SENSOR_STBD: user_input.get(CONF_TANK_SENSOR_STBD),
+                CONF_TANK_FULL_THRESHOLD: user_input.get(
+                    CONF_TANK_FULL_THRESHOLD, DEFAULT_TANK_FULL_THRESHOLD
+                ),
+            }
+
+            return self.async_create_entry(
+                title=f"Spectra {self._device_name}",
+                data=data,
+            )
+
+        return self.async_show_form(
+            step_id="options",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_POWER_SWITCH): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="switch"),
+                    ),
+                    vol.Optional(CONF_POWER_SENSOR): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            domain="sensor",
+                            device_class="power",
+                        ),
+                    ),
+                    vol.Optional(CONF_TANK_SENSOR_PORT): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="sensor"),
+                    ),
+                    vol.Optional(CONF_TANK_SENSOR_STBD): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="sensor"),
+                    ),
+                    vol.Optional(
+                        CONF_TANK_FULL_THRESHOLD,
+                        default=DEFAULT_TANK_FULL_THRESHOLD,
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=50,
+                            max=100,
+                            step=1,
+                            unit_of_measurement="%",
+                            mode="slider",
+                        ),
+                    ),
+                }
+            ),
+        )

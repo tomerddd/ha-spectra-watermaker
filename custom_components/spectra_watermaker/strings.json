@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Spectra Watermaker",
+        "description": "Enter the IP address of your Spectra Connect WiFi module.",
+        "data": {
+          "host": "IP Address"
+        },
+        "data_description": {
+          "host": "The IP address of your Spectra Connect module (e.g., 192.168.1.100)"
+        }
+      },
+      "options": {
+        "title": "Watermaker Options",
+        "description": "Configure optional power management and tank sensors. All fields are optional.",
+        "data": {
+          "power_switch": "Power outlet switch",
+          "power_sensor": "Power consumption sensor",
+          "tank_sensor_port": "Port tank level sensor",
+          "tank_sensor_stbd": "Starboard tank level sensor",
+          "tank_full_threshold": "Tank full auto-stop threshold"
+        },
+        "data_description": {
+          "power_switch": "Switch entity that controls power to the watermaker (e.g., a smart outlet)",
+          "power_sensor": "Sensor that measures the watermaker outlet's power draw in watts",
+          "tank_sensor_port": "Sensor providing port tank level as a percentage",
+          "tank_sensor_stbd": "Sensor providing starboard tank level as a percentage",
+          "tank_full_threshold": "Stop the watermaker when any tank reaches this level for 30 seconds"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the Spectra watermaker. Check the IP address and ensure the device is powered on."
+    },
+    "abort": {
+      "already_configured": "This watermaker is already configured."
+    }
+  }
+}
