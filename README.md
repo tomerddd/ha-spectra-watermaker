@@ -33,7 +33,7 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
 
 1. Open **HACS** in Home Assistant
 2. Click the three-dot menu (top right) > **Custom repositories**
-3. Add `https://github.com/deepplaya/ha-spectra-watermaker` with category **Integration**
+3. Add `https://github.com/tomerddd/ha-spectra-watermaker` with category **Integration**
 4. Search for **Spectra Watermaker Assistant** and click **Download**
 5. **Restart Home Assistant**
 
@@ -174,7 +174,7 @@ logger:
 
 ## Contributing
 
-Issues and pull requests welcome at [GitHub](https://github.com/deepplaya/ha-spectra-watermaker).
+Issues and pull requests welcome at [GitHub](https://github.com/tomerddd/ha-spectra-watermaker).
 
 ## License
 
