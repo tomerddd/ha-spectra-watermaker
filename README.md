@@ -73,6 +73,7 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
 | `sensor.spectra_remaining_time` | Remaining time (timed runs) |
 | `sensor.spectra_flush_remaining` | Flush countdown |
 | `sensor.spectra_water_destination` | Tank or overboard |
+| `sensor.spectra_water_quality` | Water quality level based on TDS: excellent, good, acceptable, poor, undrinkable |
 | `sensor.spectra_total_liters_today` | Liters produced today |
 | `sensor.spectra_prefilter_last_changed` | Date prefilters were last replaced |
 | `sensor.spectra_prefilter_days_ago` | Days since last prefilter change |
@@ -129,6 +130,18 @@ If you configure a power outlet switch, the integration handles the full lifecyc
 During each run, the integration ignores TDS readings from the first 60 seconds and while water is being diverted overboard (startup phase). Once the watermaker switches to filling the tank, it begins tracking min/max/avg TDS. This gives clean quality data for long-term trend analysis.
 
 The **time-to-fill** metric (seconds from start until water quality is good enough to fill) trends upward as membranes age or prefilters need replacing.
+
+### Water Quality (TDS)
+
+TDS (Total Dissolved Solids) measures how well the RO membrane rejects salt. The integration provides a real-time quality level based on product water TDS:
+
+| Level | TDS (ppm) | Meaning |
+|-------|-----------|---------|
+| Excellent | < 200 | Fresh membranes, optimal conditions |
+| Good | 200–350 | Normal for Spectra Newport systems |
+| Acceptable | 350–500 | Within WHO/EPA guidelines |
+| Poor | 500–700 | Membrane cleaning recommended |
+| Undrinkable | > 700 | Do not fill tanks |
 
 ## Run History
 

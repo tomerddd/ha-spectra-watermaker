@@ -76,8 +76,8 @@ Pure sensor data, no page navigation required. Every message contains all fields
 | `f_flow` | gph | Feed (seawater) flow rate | 0–? gph | Reads 0 on our unit |
 | `boost_p` | psi | Boost pump pressure | ~29 psi when running | Pre-membrane |
 | `feed_p` | psi | Membrane feed pressure | ~195 psi when running | Main operating pressure |
-| `sal_1` | ppm | Product water salinity (TDS) | 290–310 ppm running | Quality indicator |
-| `sal_2` | ppm | Feed water salinity | ~27 ppm | Seawater reference |
+| `sal_1` | ppm | Product water TDS (Total Dissolved Solids) | 290–310 ppm running | Primary quality indicator — see Water Quality section |
+| `sal_2` | ppm | Feed water TDS | ~27 ppm | Seawater reference |
 | `temp_1` | °F | Water temperature | ~82 °F | Seawater intake temp |
 | `temp_2` | °F | Secondary temperature | 32.0 °F | Not connected (reads 32) |
 | `bat_v` | V | Battery/supply voltage | 24.3–24.5 V | 24V DC supply |
@@ -364,6 +364,44 @@ These can be enhanced or replaced with WebSocket-derived data for much richer mo
 
 ---
 
+## Water Quality — TDS Reference
+
+**TDS (Total Dissolved Solids)** measures the total concentration of dissolved substances in water, in parts per million (ppm). For reverse osmosis systems, it's the primary metric for membrane performance — how well the membrane rejects salt from seawater (~35,000 ppm).
+
+### Quality Levels
+
+| Level | TDS (ppm) | Description | Action |
+|-------|-----------|-------------|--------|
+| **Excellent** | < 200 | Fresh/cleaned membranes, optimal conditions | None |
+| **Good** | 200–350 | Normal operating range for Spectra Newport | None |
+| **Acceptable** | 350–500 | Within WHO/EPA guidelines, trending up | Monitor trend |
+| **Poor** | 500–700 | Membrane performance declining | Schedule membrane cleaning, check O-rings/seals |
+| **Undrinkable** | > 700 | Excessive salt passage | Divert overboard, do not fill tanks. Clean or replace membranes |
+
+### Context
+
+- **Salt rejection %** = `(1 - product_TDS / feed_TDS) × 100`. At 300 ppm from 35,000 ppm seawater = **99.14% rejection** — good.
+- **Spectra Newport systems** use lower-pressure energy recovery, so TDS is typically higher (200–350 ppm) than traditional high-pressure RO (100–200 ppm). This is by design.
+- **WHO guideline**: < 600 ppm is "good palatability", up to 1,000 ppm is acceptable.
+- **US EPA secondary standard**: < 500 ppm recommended.
+- **Spectra recommendation**: product water under 500 ppm; clean membranes when TDS rises 15–20% above baseline.
+
+### Factors Affecting TDS
+
+- **Water temperature**: warmer = lower TDS (better membrane flux)
+- **Feedwater salinity**: varies by location (coastal, open ocean, near rivers)
+- **Membrane age**: gradual TDS rise over months is normal aging
+- **Sudden TDS jump**: suggests seal failure, O-ring issue, or membrane damage — not normal wear
+- **Run startup**: first minutes produce higher TDS until system stabilizes (integration ignores this)
+
+### Integration Behavior
+
+- `sensor.spectra_water_quality` updates in real-time from `sal_1` readings
+- Only evaluates quality while state is `running` and `toggle_tank` == `0` (filling tank)
+- During startup/overboard divert, sensor shows last known quality or `unknown`
+- Run history stores min/max/avg TDS per run (after stabilization) for long-term trend tracking
+- `time_to_fill` metric (seconds from start until water diverts to tank) also trends with membrane health
+
 ## Safety Notes
 
 - The Spectra Connect has **no authentication** on its WebSocket — anyone on the network can send commands.
@@ -479,6 +517,7 @@ The integration should be configurable entirely through the HA UI (config flow),
 |--------|--------|
 | `sensor.spectra_state` | `off`, `booting`, `prompt`, `idle`, `starting`, `running`, `flushing`, `stopping`, `error` |
 | `sensor.spectra_water_destination` | `tank`, `overboard` |
+| `sensor.spectra_water_quality` | `excellent`, `good`, `acceptable`, `poor`, `undrinkable` — derived from `sal_1` TDS |
 
 **Controls** (services and/or buttons):
 

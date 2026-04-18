@@ -47,3 +47,18 @@ DEFAULT_HISTORY_LIMIT = 50
 
 # PPM stabilization
 PPM_IGNORE_STARTUP_SEC = 60
+
+# Water quality levels (TDS ppm thresholds)
+QUALITY_EXCELLENT = "excellent"  # < 200 ppm
+QUALITY_GOOD = "good"            # 200-350 ppm
+QUALITY_ACCEPTABLE = "acceptable"  # 350-500 ppm
+QUALITY_POOR = "poor"            # 500-700 ppm
+QUALITY_UNDRINKABLE = "undrinkable"  # > 700 ppm
+
+QUALITY_THRESHOLDS = [
+    (200, QUALITY_EXCELLENT),
+    (350, QUALITY_GOOD),
+    (500, QUALITY_ACCEPTABLE),
+    (700, QUALITY_POOR),
+]
+# Above 700 → QUALITY_UNDRINKABLE
