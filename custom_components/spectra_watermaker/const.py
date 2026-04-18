@@ -41,7 +41,8 @@ STOP_REASON_ERROR = "error"
 PAGES_RUNNING = {"5", "6", "30", "31", "32"}
 PAGES_FLUSHING = {"2"}
 PAGES_IDLE = {"4", "37", "39", "40", "48", "49"}
-PAGES_PROMPT = {"1", "10", "14", "43", "44", "45"}
+PAGES_PROMPT = {"1", "14", "43", "44", "45"}
+PAGES_STARTUP = {"10", "101"}  # Page 10 = screensaver/power interrupt/countdown, 101 = init
 
 # Run history
 DEFAULT_HISTORY_LIMIT = 50

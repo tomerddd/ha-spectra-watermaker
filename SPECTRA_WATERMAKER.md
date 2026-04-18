@@ -235,22 +235,20 @@ Idle pages vary by model/firmware (pages 4, 37, 39, 40, 48, 49). Check `label0` 
 
 ### Start Sequences
 
-**Fill Tank mode** (1500ms between each step):
+**Start Autorun** — confirmed sequence for Newport 1000 (1500ms between each step):
 ```
-{"page":"10","cmd":"BUTTON0"}   # Clear screensaver (if active)
+{"page":"10","cmd":"BUTTON0"}   # Dismiss screensaver (if on page 10)
 {"page":"4","cmd":"BUTTON1"}    # Press START
-{"page":"37","cmd":"BUTTON0"}   # Select "Fill Tank"
+{"page":"37","cmd":"BUTTON0"}   # Select AUTORUN (only option on Newport 1000)
+{"page":"29","cmd":"BUTTON2"}   # Select hours (button1=gallons, button2=hours)
+{"page":"29","cmd":"BUTTON3"}   # Press OK (uses current amount value)
+  → Page 10: "System starting : 8" (8-second countdown)
+  → Page 32: AUTORUN : MAIN DASHBOARD (running)
 ```
 
-**Autofill with quantity** (1500ms between each step):
-```
-{"page":"4","cmd":"BUTTON1"}    # Press START
-{"page":"37","cmd":"BUTTON1"}   # Select Autofill
-{"page":"29","cmd":"BUTTON1"}   # Select liters (or BUTTON2 for hours)
-{"page":"29","cmd":"LABEL0"}    # Confirm selection
-{"page":"12","data":"100"}      # Input quantity
-{"page":"29","cmd":"BUTTON3"}   # Apply and start
-```
+**Setting quantity**: To change the amount, click `LABEL0` on page 29 which opens page 12 (text input), send `{"page":"12","data":"1.5"}`, then back on page 29 press `BUTTON3` (OK). Default value persists between runs.
+
+**Note**: Page 37 only shows `AUTORUN` on the Newport 1000 (button1 and button2 are empty). Other Spectra models may show additional options like "Fill Tank".
 
 **Manual flush from idle** (single command):
 ```
@@ -450,7 +448,23 @@ Outlet ON
   → System reaches idle page (ready for commands)
 ```
 
-**TODO**: Capture the exact page numbers and button labels for boot prompts (test when watermaker is next stopped). Document the page sequence and required responses.
+### Confirmed Boot Sequence (tested 2026-04-18)
+
+Power off → 5s wait → Power on:
+
+1. **~11 seconds** — WebSocket not available (device booting)
+2. **Page 101** — blank page, displayed briefly during internal init
+3. **Page 10** — `"POWER INTERRUPT"` warning with `alarm: "ON"` (beep). `button0: "OK"`. Send `BUTTON0` to dismiss.
+4. **Page 4** — idle, ready for commands
+
+No "chemical storage" prompt appeared in this test (may only appear after extended power-off periods).
+
+**Auto-dismiss logic for integration:**
+- Page 101: ignore, wait
+- Page 10 with `label0` containing `"POWER INTERRUPT"`: send `BUTTON0` (OK)
+- Page 10 with `label0` containing `"AUTOSTORE"`: send `BUTTON0` (dismiss screensaver)
+- Pages 1/44/45 with `label0` containing `"chemical"` or `"stored"`: send the "No" button (identify from label text)
+- Page 4: boot complete, system idle
 
 ---
 
