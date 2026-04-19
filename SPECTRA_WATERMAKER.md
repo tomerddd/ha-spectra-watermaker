@@ -500,7 +500,6 @@ The integration should be configurable entirely through the HA UI (config flow),
 | `sensor.spectra_filter_condition` | from port 9000 | % | — |
 | `sensor.spectra_elapsed_time` | from port 9000 | — | `duration` |
 | `sensor.spectra_remaining_time` | from port 9000 | — | `duration` |
-| `sensor.spectra_flush_remaining` | from port 9000 | — | `duration` |
 | `sensor.spectra_flush_progress` | from port 9000 page 2 gauge0 | % | — |
 | `sensor.spectra_autostore_countdown` | from port 9000 page 4 label1 | — | `duration` |
 
@@ -521,14 +520,6 @@ The integration should be configurable entirely through the HA UI (config flow),
 | `sensor.spectra_last_run_liters` | `float` (L) | Estimated liters produced in last run (flow rate integrated over time) |
 | `sensor.spectra_total_liters_today` | `float` (L) | Total liters produced today (utility meter style, resets daily) |
 
-**Tank sensors** (from configured external entities):
-
-| Entity | Description |
-|--------|-------------|
-| `sensor.spectra_tank_port_level` | Mirror of configured port tank sensor (%) |
-| `sensor.spectra_tank_stbd_level` | Mirror of configured starboard tank sensor (%) |
-| `binary_sensor.spectra_tank_full` | True when any configured tank >= threshold for 30s |
-
 **Binary sensors**:
 
 | Entity | Logic |
@@ -541,22 +532,46 @@ The integration should be configurable entirely through the HA UI (config flow),
 
 | Entity | Values |
 |--------|--------|
-| `sensor.spectra_state` | `off`, `booting`, `prompt`, `idle`, `starting`, `running`, `flushing`, `stopping`, `error` |
+| `sensor.spectra_state` | `off`, `booting`, `prompt`, `idle`, `starting`, `running`, `flushing`, `error` |
 | `sensor.spectra_water_destination` | `tank`, `overboard` |
 | `sensor.spectra_water_quality` | `excellent`, `good`, `acceptable`, `poor`, `undrinkable` — derived from `sal_1` TDS |
 
-**Controls** (services and/or buttons):
+**Controls**:
 
 | Entity / Service | Action |
 |------------------|--------|
-| `button.spectra_start_fill_tank` | Power on (if outlet configured) → wait for idle → start fill tank |
-| `button.spectra_start_autofill` | Start autofill (with configurable default quantity) |
-| `button.spectra_stop` | Send stop command |
-| `button.spectra_flush` | Trigger freshwater flush |
-| `switch.spectra_watermaker` | On = start fill tank, Off = stop (simple toggle for dashboard) |
-| `select.spectra_water_destination` | Toggle tank vs. overboard |
-| `button.spectra_reset_prefilter` | Reset prefilter last-changed date to now |
-| `number.spectra_tank_full_threshold` | Auto-stop threshold (50–100%, default 95) |
+| `button.spectra_stop` | Send stop command (works from running or flushing) |
+| `button.spectra_flush` | Trigger freshwater flush from idle |
+| `button.spectra_reset_prefilter` | Reset prefilter change date to now |
+| `switch.spectra_watermaker` | On = start with last-used duration, Off = stop. Simple dashboard toggle. |
+| `select.spectra_water_destination` | Toggle tank vs. overboard while running |
+| `number.spectra_run_duration` | Duration for next run in hours (0.5–8.0, default 2.0). Persisted. |
+| `number.spectra_tank_full_threshold` | Auto-stop threshold (50–100%, default 95%) |
+
+**Services** (for automations needing parameters):
+
+| Service | Parameters | Action |
+|---------|------------|--------|
+| `spectra_watermaker.start` | `duration_hours` (float, optional — uses `number.spectra_run_duration` if omitted) | Power on → boot → dismiss prompts → start autorun for specified duration |
+| `spectra_watermaker.stop` | — | Stop (triggers flush) |
+| `spectra_watermaker.get_run_history` | `limit` (int, default 10) | Returns last N runs as response data |
+
+### Start Duration — Implementation
+
+The Spectra's page 29 input sequence (LABEL0 → page 12 text input → submit) is fragile over WebSocket. Two approaches:
+
+**Approach A — Set duration via page 12 input** (risky):
+```
+page 4 BUTTON1 → page 37 BUTTON0 → page 29 LABEL0 → page 12 data:"1.5" → page 29 BUTTON3
+```
+Risk: LABEL0 opens an input page that may disrupt the WebSocket stream. Needs careful timeout/retry handling.
+
+**Approach B — Use the persisted default** (reliable):
+The Spectra remembers the last-used quantity. Set it once manually on the physical unit, then the integration just presses OK on page 29 without changing the value. The `number.spectra_run_duration` entity would track what the user wants, but the actual duration is managed by HA — the integration starts the watermaker with whatever the Spectra has stored, and HA sends a stop command after `run_duration` hours if the Spectra's own timer hasn't expired first.
+
+**Recommended: Approach B** — simpler, more reliable. The integration's `number.spectra_run_duration` acts as an HA-side timer. Start the watermaker (auto-accept whatever duration the Spectra has), and if the HA timer expires first, send stop. The Spectra's internal timer acts as a safety backup.
+
+**Note on extending runs**: Not possible mid-run. To "extend", the integration would need to stop → wait for flush → restart, which wastes 8 minutes. Better to set a longer duration upfront.
 
 ### State Machine
 
@@ -737,6 +752,22 @@ Use HA's `Store` helper (`homeassistant.helpers.storage.Store`) — a JSON file 
 - Enables long-term trend analysis: plot `avg_ppm` and `time_to_fill_seconds` over weeks/months to detect membrane degradation or filter replacement needs
 
 **Daily production** (`sensor.spectra_total_liters_today`) uses HA's `utility_meter` pattern — the coordinator accumulates liters from flow readings and resets at midnight. Persisted via `RestoreEntity` so it survives restarts within the same day.
+
+### Known Issues & Edge Cases
+
+1. **Single WebSocket client** — The Spectra may only support 1–2 concurrent WebSocket connections. The integration must be the sole client; having the Spectra web UI open simultaneously may cause dropped messages or hung connections. Reconnect logic must handle this.
+
+2. **Mid-run HA restart** — If HA restarts while the watermaker is running, the integration must detect the running state from the first port 9000 messages and resume tracking. Run history for that session will have incomplete data (no start timestamp, partial TDS stats). Best-effort: use `p_flow > 0` from port 9001 to confirm running, start tracking from the reconnect moment.
+
+3. **Start safety** — Reject start commands if state is not `idle`. Reject stop commands if state is `off` or `idle`. Log warnings, don't crash.
+
+4. **f_flow always reads 0** — On our Newport 1000, the feed flow sensor (`f_flow`) always reports 0. Mark this entity as `entity_category: diagnostic` so it's hidden by default. Other Spectra models may report valid values.
+
+5. **Model-specific button mapping** — Page 4 and page 37 button labels vary by model/firmware. The integration should read the `button0`/`button1` labels from the WebSocket message to determine which button does what, rather than hardcoding. E.g., find the button where the label is "START".
+
+6. **Page 12 input fragility** — The text input page (12) opened by clicking LABEL0 can disrupt the WebSocket message flow. The HA-side timer approach (Approach B) avoids this entirely.
+
+7. **Autostore "Not running"** — After stopping a flush early, the autostore countdown shows "Not running" instead of a countdown. Handle this as a string, not parse as duration.
 
 ### Architecture Notes
 

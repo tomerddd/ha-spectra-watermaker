@@ -28,7 +28,6 @@ STATE_IDLE = "idle"
 STATE_STARTING = "starting"
 STATE_RUNNING = "running"
 STATE_FLUSHING = "flushing"
-STATE_STOPPING = "stopping"
 STATE_ERROR = "error"
 
 # Stop reasons
