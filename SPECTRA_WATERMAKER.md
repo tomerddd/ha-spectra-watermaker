@@ -491,18 +491,18 @@ The integration should be configurable entirely through the HA UI (config flow),
 | Entity | Source field | Unit | Device class |
 |--------|-------------|------|--------------|
 | `sensor.spectra_product_flow` | `p_flow` | L/h (converted) | `water` |
-| `sensor.spectra_feed_flow` | `f_flow` | L/h (converted) | `water` |
+| `sensor.spectra_feed_flow` | `f_flow` | L/h (converted) | `water` | `diagnostic` — always 0 on Newport 1000 |
 | `sensor.spectra_boost_pressure` | `boost_p` | psi | `pressure` |
 | `sensor.spectra_feed_pressure` | `feed_p` | psi | `pressure` |
 | `sensor.spectra_product_tds` | `sal_1` | ppm | — |
-| `sensor.spectra_feed_tds` | `sal_2` | ppm | — |
-| `sensor.spectra_water_temperature` | `temp_1` | °C (converted) | `temperature` |
-| `sensor.spectra_battery_voltage` | `bat_v` | V | `voltage` |
+| `sensor.spectra_feed_tds` | `sal_2` | ppm | — | `diagnostic` |
+| `sensor.spectra_water_temperature` | `temp_1` | °C (converted) | `temperature` | |
+| `sensor.spectra_battery_voltage` | `bat_v` | V | `voltage` | `diagnostic` |
 | `sensor.spectra_filter_condition` | from port 9000 | % | — |
 | `sensor.spectra_elapsed_time` | from port 9000 | — | `duration` |
 | `sensor.spectra_remaining_time` | from port 9000 | — | `duration` |
 | `sensor.spectra_flush_progress` | from port 9000 page 2 gauge0 | % | — |
-| `sensor.spectra_autostore_countdown` | from port 9000 page 4 label1 | — | `duration` |
+| `sensor.spectra_autostore_countdown` | from port 9000 page 4 label1 | — | `duration` | `diagnostic` |
 
 **Maintenance sensors**:
 
@@ -511,20 +511,30 @@ The integration should be configurable entirely through the HA UI (config flow),
 | `sensor.spectra_prefilter_last_changed` | `timestamp` | Date prefilters were last replaced. User-settable via service or button. Persisted in `config_entry` options or `.storage`. |
 | `sensor.spectra_prefilter_days_ago` | `int` (days) | Days since last prefilter change. Derived from above timestamp. Useful for automations (e.g., notify when > 90 days). |
 
-**Run history sensors**:
+**Run history sensors** (last run, `diagnostic` category except duration and avg_ppm):
 
 | Entity | Type | Description |
 |--------|------|-------------|
-| `sensor.spectra_last_run_start` | `timestamp` | When the last production run started |
-| `sensor.spectra_last_run_end` | `timestamp` | When the last production run ended (transition to flushing) |
 | `sensor.spectra_last_run_duration` | `duration` | Total production time of last run (excludes flush) |
-| `sensor.spectra_last_run_liters` | `float` (L) | Estimated liters produced in last run (flow rate integrated over time) |
+| `sensor.spectra_last_run_avg_ppm` | `float` (ppm) | Average TDS during fill phase of last run |
+| `sensor.spectra_last_run_start` | `timestamp` | When the last production run started. `diagnostic` |
+| `sensor.spectra_last_run_end` | `timestamp` | When the last production run ended. `diagnostic` |
+| `sensor.spectra_last_run_liters` | `float` (L) | Estimated liters produced (only while filling tank). `diagnostic` |
+| `sensor.spectra_last_run_time_to_fill` | `int` (sec) | Seconds from start to tank fill. `diagnostic` |
+| `sensor.spectra_last_run_stop_reason` | `string` | `manual`/`timer`/`tank_full`/`error`/`power_loss`/`device_reboot`. `diagnostic` |
+
+**Flush tracking**:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `sensor.spectra_last_flush` | `timestamp` | When the last flush completed (flushing → idle transition). Persisted in `.storage`. Available even when off/disconnected. Updated for both post-run auto-flush and manual flush. |
+| `sensor.spectra_days_since_flush` | `int` (days) | Derived from above. For automations: "if > 7 then trigger flush". |
 
 **Production tracking** (for HA Energy Dashboard):
 
 | Entity | Type | Description |
 |--------|------|-------------|
-| `sensor.spectra_total_liters` | `float` (L) | Total liters produced, ever-increasing. `device_class: water`, `state_class: total_increasing`. Compatible with HA Energy Dashboard water tracking. Persisted via `RestoreEntity`. |
+| `sensor.spectra_total_liters` | `float` (L) | Total liters produced, ever-increasing. **Only counts while `toggle_tank == 0`** (water going to tank, not overboard). `device_class: water`, `state_class: total_increasing`. Compatible with HA Energy Dashboard water tracking. Persisted via `RestoreEntity`. |
 | `sensor.spectra_total_hours` | `float` (h) | Total hours of production time. `state_class: total_increasing`. Persisted. |
 
 **Binary sensors**:
@@ -545,23 +555,25 @@ The integration should be configurable entirely through the HA UI (config flow),
 
 **Controls**:
 
-| Entity / Service | Action |
-|------------------|--------|
-| `button.spectra_stop` | Send stop command (works from running or flushing) |
-| `button.spectra_flush` | Trigger freshwater flush from idle |
-| `button.spectra_reset_prefilter` | Reset prefilter change date to now |
-| `switch.spectra_watermaker` | On = start with default duration, Off = stop. Simple dashboard toggle. |
-| `select.spectra_water_destination` | Toggle tank vs. overboard while running |
-| `number.spectra_run_duration` | Duration for next start in hours (0.5–8.0, default 2.0). Persisted. Sets the value on the Spectra when starting. |
-| `number.spectra_tank_full_threshold` | Auto-stop threshold (50–100%, default 98%) |
+| Entity | Type | Action |
+|--------|------|--------|
+| `switch.spectra_power` | switch | Controls the outlet. On = power on, Off = power off. **Only created if power outlet switch is configured.** Blocks power-off during flush (waits for completion). |
+| `button.spectra_start` | button | Start making water. Full sequence: power on (if needed) → boot → dismiss prompts → set duration → start autorun. Uses `number.spectra_run_duration` for duration. Rejected if already running. |
+| `button.spectra_stop` | button | Stop making water (triggers flush). Works from running or flushing. |
+| `button.spectra_flush` | button | Trigger manual freshwater flush from idle. Important for membrane preservation when not making water regularly. |
+| `button.spectra_reset_prefilter` | button | Reset prefilter change date to now and zero the hours counter. |
+| `select.spectra_water_destination` | select | Toggle tank/overboard while running. |
+| `number.spectra_run_duration` | number | Duration for next start in hours (0.5–8.0, default 2.0). Persisted. Sent to the Spectra when starting. |
+| `number.spectra_tank_full_threshold` | number | Auto-stop threshold (50–100%, default 98%). |
 
 **Services** (for automations needing parameters):
 
 | Service | Parameters | Action |
 |---------|------------|--------|
-| `spectra_watermaker.start` | `duration_hours` (float, optional — uses `number.spectra_run_duration` if omitted) | Power on → boot → dismiss prompts → set duration on Spectra → start autorun |
-| `spectra_watermaker.stop` | — | Stop (triggers flush) |
-| `spectra_watermaker.get_run_history` | `limit` (int, default 10) | Returns last N runs as response data |
+| `spectra_watermaker.start` | `duration_hours` (float, optional — uses `number.spectra_run_duration` if omitted) | Same as `button.spectra_start` but allows overriding duration. |
+| `spectra_watermaker.stop` | — | Same as `button.spectra_stop`. |
+| `spectra_watermaker.flush` | — | Same as `button.spectra_flush`. Useful for automations: "if days_since_flush > 7, call flush." |
+| `spectra_watermaker.get_run_history` | `limit` (int, default 10) | Returns last N runs as response data. |
 
 ### Start Duration — Implementation
 

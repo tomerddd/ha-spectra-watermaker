@@ -59,29 +59,26 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
 
 | Entity | Description |
 |--------|-------------|
-| `sensor.spectra_state` | Current state: off, booting, prompt, idle, running, flushing, error |
+| `sensor.spectra_state` | Current state: off, booting, prompt, idle, starting, running, flushing, error |
 | `sensor.spectra_product_flow` | Fresh water production rate (L/h) |
-| `sensor.spectra_feed_flow` | Seawater feed rate (L/h) |
 | `sensor.spectra_boost_pressure` | Boost pump pressure (psi) |
 | `sensor.spectra_feed_pressure` | Membrane feed pressure (psi) |
-| `sensor.spectra_product_tds` | Product water salinity (ppm) |
-| `sensor.spectra_feed_tds` | Feed water salinity (ppm) |
+| `sensor.spectra_product_tds` | Product water TDS/salinity (ppm) |
 | `sensor.spectra_water_temperature` | Water temperature (°C) |
-| `sensor.spectra_battery_voltage` | Supply voltage (V) |
+| `sensor.spectra_water_quality` | Quality level: excellent, good, acceptable, poor, undrinkable |
+| `sensor.spectra_water_destination` | Tank or overboard |
 | `sensor.spectra_filter_condition` | Prefilter condition (%) |
 | `sensor.spectra_elapsed_time` | Current run elapsed time |
 | `sensor.spectra_remaining_time` | Remaining time (timed runs) |
-| `sensor.spectra_flush_remaining` | Flush countdown |
-| `sensor.spectra_water_destination` | Tank or overboard |
-| `sensor.spectra_water_quality` | Water quality level based on TDS: excellent, good, acceptable, poor, undrinkable |
-| `sensor.spectra_total_liters_today` | Liters produced today |
+| `sensor.spectra_total_liters` | Total liters produced (Energy Dashboard compatible, only counts tank fill) |
+| `sensor.spectra_total_hours` | Total production hours |
+| `sensor.spectra_last_run_duration` | Last run duration |
+| `sensor.spectra_last_run_avg_ppm` | Last run average TDS |
+| `sensor.spectra_last_flush` | When the last flush completed |
+| `sensor.spectra_days_since_flush` | Days since last flush (for auto-flush automations) |
 | `sensor.spectra_prefilter_last_changed` | Date prefilters were last replaced |
 | `sensor.spectra_prefilter_days_ago` | Days since last prefilter change |
-| `sensor.spectra_last_run_start` | Last run start time |
-| `sensor.spectra_last_run_duration` | Last run duration |
-| `sensor.spectra_last_run_liters` | Last run liters produced |
-| `sensor.spectra_last_run_avg_ppm` | Last run average TDS |
-| `sensor.spectra_last_run_time_to_fill` | Last run seconds until water quality was good enough to fill |
+| `sensor.spectra_prefilter_hours_since_change` | Production hours since last prefilter change |
 
 ### Binary Sensors
 
@@ -90,20 +87,19 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
 | `binary_sensor.spectra_connected` | WebSocket connection alive |
 | `binary_sensor.spectra_running` | Watermaker is producing or flushing |
 | `binary_sensor.spectra_filling_tank` | Water is going to tank (not diverting overboard) |
-| `binary_sensor.spectra_tank_full` | Any configured tank at or above threshold |
 
 ### Controls
 
-| Entity | Description |
-|--------|-------------|
-| `switch.spectra_watermaker` | Simple on/off toggle (start fill tank / stop) |
-| `button.spectra_start_fill_tank` | Start in fill tank mode |
-| `button.spectra_start_autofill` | Start in autofill mode |
-| `button.spectra_stop` | Stop the watermaker |
-| `button.spectra_flush` | Trigger freshwater flush |
-| `button.spectra_reset_prefilter` | Reset prefilter change date to now |
-| `select.spectra_water_destination` | Toggle tank vs. overboard |
-| `number.spectra_tank_full_threshold` | Auto-stop threshold (50–100%) |
+| Entity | Type | Description |
+|--------|------|-------------|
+| `switch.spectra_power` | switch | Controls the outlet (only if configured). Blocks power-off during flush. |
+| `button.spectra_start` | button | Start making water. Powers on if needed, dismisses prompts, sets duration, starts autorun. |
+| `button.spectra_stop` | button | Stop the watermaker (triggers flush) |
+| `button.spectra_flush` | button | Manual freshwater flush from idle |
+| `button.spectra_reset_prefilter` | button | Reset prefilter date and hours counter |
+| `select.spectra_water_destination` | select | Toggle tank vs. overboard while running |
+| `number.spectra_run_duration` | number | Duration for next start (0.5–8.0 hours, default 2.0) |
+| `number.spectra_tank_full_threshold` | number | Auto-stop threshold (50–100%, default 98%) |
 
 ## How It Works
 
