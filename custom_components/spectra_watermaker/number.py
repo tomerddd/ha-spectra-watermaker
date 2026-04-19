@@ -34,7 +34,7 @@ class SpectraRunDuration(NumberEntity):
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_run_duration"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.config_entry.entry_id)},
-            "name": f"Spectra {coordinator.sensor_data.device or DEFAULT_MODEL}",
+            "name": "Watermaker",
             "manufacturer": MANUFACTURER,
             "model": coordinator.sensor_data.device or DEFAULT_MODEL,
         }
@@ -79,7 +79,7 @@ class SpectraTankFullThreshold(NumberEntity):
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_tank_full_threshold"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.config_entry.entry_id)},
-            "name": f"Spectra {coordinator.sensor_data.device or DEFAULT_MODEL}",
+            "name": "Watermaker",
             "manufacturer": MANUFACTURER,
             "model": coordinator.sensor_data.device or DEFAULT_MODEL,
         }

@@ -334,7 +334,7 @@ class SpectraSensor(SensorEntity):
         self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{description.key}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.config_entry.entry_id)},
-            "name": f"Spectra {coordinator.sensor_data.device or DEFAULT_MODEL}",
+            "name": "Watermaker",
             "manufacturer": MANUFACTURER,
             "model": coordinator.sensor_data.device or DEFAULT_MODEL,
         }
