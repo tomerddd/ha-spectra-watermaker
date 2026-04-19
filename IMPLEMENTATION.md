@@ -1,12 +1,12 @@
 # Spectra Watermaker Assistant — Implementation Guide
 
-Quick-reference for resuming work on this integration. Read this to get full context without reading 3,500 lines of code.
+Quick-reference for resuming work on this integration. Read this to get full context without reading ~3,600 lines of code.
 
 ## Repository
 
 - **GitHub**: https://github.com/tomerddd/ha-spectra-watermaker
-- **Version**: 0.2.0
-- **Total code**: ~3,500 lines across 15 Python files + 1 YAML
+- **Version**: 0.2.6
+- **Total code**: ~3,600 lines across 15 Python files + 1 YAML
 - **Target**: HACS custom integration (structured for future HA core migration)
 
 ## Architecture
@@ -14,25 +14,25 @@ Quick-reference for resuming work on this integration. Read this to get full con
 ```
 custom_components/spectra_watermaker/
 ├── Protocol layer (standalone, no HA imports — future PyPI package):
-│   ├── models.py      (237 lines) — dataclasses, enums
-│   ├── client.py      (360 lines) — dual WebSocket client
-│   └── protocol.py    (450 lines) — command sequences, state detection
+│   ├── models.py      — dataclasses, enums
+│   ├── client.py      — dual WebSocket client
+│   └── protocol.py    — command sequences, state detection
 │
 ├── HA integration layer:
-│   ├── coordinator.py (965 lines) — the brain: state machine, run tracking, auto-stop
-│   ├── sensor.py      (405 lines) — 30 sensors via EntityDescription
-│   ├── binary_sensor.py (110 lines) — 3 binary sensors
-│   ├── button.py      (100 lines) — 4 buttons
-│   ├── switch.py       (83 lines) — power switch (conditional)
-│   ├── select.py       (71 lines) — water destination
-│   ├── number.py      (123 lines) — run duration, tank threshold
-│   ├── services.py    (113 lines) — 4 service handlers
-│   ├── storage.py     (163 lines) — persistent storage (2 Store files)
-│   ├── __init__.py     (62 lines) — setup/teardown
-│   └── config_flow.py (197 lines) — 2-step config + options flow
+│   ├── coordinator.py — the brain: state machine, run tracking, auto-stop, time polling
+│   ├── sensor.py      — 31 sensors via EntityDescription
+│   ├── binary_sensor.py — 3 binary sensors
+│   ├── button.py      — 4 buttons
+│   ├── switch.py      — power switch (conditional)
+│   ├── select.py      — water destination
+│   ├── number.py      — run duration, tank threshold
+│   ├── services.py    — 4 service handlers
+│   ├── storage.py     — persistent storage (2 Store files)
+│   ├── __init__.py    — setup/teardown
+│   └── config_flow.py — 2-step config + options flow
 │
 ├── Config/metadata:
-│   ├── const.py        (74 lines)
+│   ├── const.py
 │   ├── manifest.json
 │   ├── strings.json / translations/en.json
 │   └── services.yaml
@@ -85,13 +85,54 @@ OFF ──power_on──→ BOOTING ──ws_connects──→ PROMPT ──auto
 7. If someone is browsing settings → falls through to IDLE (correct behavior)
 
 **Key transitions and side effects** (coordinator._handle_state_transition()):
-- `→ RUNNING`: starts run tracking (_start_run_tracking)
+- `→ RUNNING`: starts run tracking (_start_run_tracking), starts time polling
 - `RUNNING → FLUSHING`: ends run tracking, saves RunRecord to history
 - `RUNNING → IDLE`: ends run tracking (abnormal — flush skipped)
-- `FLUSHING → IDLE`: records flush timestamp, starts auto-off timer
+- `FLUSHING → IDLE`: stops time polling, records flush timestamp, starts auto-off timer
 - `BOOTING → PROMPT`: auto-dismiss boot prompts
 - `RUNNING → BOOTING/PROMPT`: device_reboot stop reason
 - External start detection: running without integration commanding → skip auto-off
+
+**Startup behavior**: On HA start, if the power switch entity is unavailable/unknown (common during boot when Zigbee hasn't loaded), the coordinator defaults to connecting rather than assuming off. Only skips connection if outlet is definitively `"off"`.
+
+## Page Field Mapping (confirmed by live testing)
+
+Elapsed and remaining time are on **different pages**:
+
+| Page | Remaining Time | Elapsed Time | Other |
+|------|---------------|-------------|-------|
+| 5 (Product) | `label5` ("43m") | **not available** | `label8` = "Tank --" (tank level, NOT time) |
+| 6 (Pressure) | `label5` ("43m") | **not available** | `label8` = "Tank --" |
+| 30 (Prefilter) | **not available** | `label1` ("1h 3m"), confirmed by `label2` = "Elapsed time" | |
+| 31 (System Data) | **not available** | `label8` ("1h 3m"), confirmed by `label9` = "Elapsed time" | All sensor data as text |
+| 32 (Main Dashboard) | **not available** | **not available** | Gauges only |
+
+**Time polling**: `_poll_time_loop()` navigates right through pages every 15s while running/flushing to capture both remaining (pages 5/6) and elapsed (pages 30/31). Started on RUNNING entry, stopped on FLUSHING→IDLE.
+
+## Sensor Value Visibility
+
+Sensors from port 9001 show different behavior based on state:
+
+| Sensor | When shown | Why |
+|--------|-----------|-----|
+| product_flow, boost_pressure, feed_pressure | Only while `is_running` | Idle residual values are confusing (3-5 psi noise) |
+| product_tds | Only while `is_running` | Stale membrane reading shows ~2400 ppm when idle |
+| water_temperature | Only while `is_running` AND `temp_f > 33` | Disconnected sensor default is 32°F |
+| battery_voltage | Always (when connected) | Valid reading regardless of state |
+| feed_flow, feed_tds | Always (when connected) | Diagnostic, always valid |
+| water_quality | Only while `is_running` | Derived from TDS |
+
+## Run Progress Sensor
+
+`sensor.spectra_watermaker_run_progress` — a single 0-100% value representing the full cycle:
+
+- **0-92%**: Production phase. Calculated as `elapsed / (elapsed + remaining) * 92.0` using Spectra's own timer values (parsed from time strings like "1h 20m").
+- **92-100%**: Flush phase. Calculated as `92.0 + (flush_gauge / 100.0 * 8.0)` from the Spectra's flush progress gauge on page 2.
+- **None**: When idle/off.
+
+The 92/8 split approximates a typical 1hr run + 7min flush. A dashboard progress bar uses severity bands: green (running), yellow >85% (almost done), red >92% (flushing).
+
+Time string parser `_parse_time_to_minutes()` handles: "1h 20m"→80, "45m"→45, "2h"→120.
 
 ## Command Sequences
 
@@ -119,7 +160,7 @@ Single command: `BUTTON0` on current running/flushing page. Only accepted from p
 Dismiss screensaver if needed, then `BUTTON0` on idle page 4 (found by label "FLUSH").
 
 ### Button detection
-`_find_button_by_label()` scans button0-button3 labels for a case-insensitive match. This makes the integration model-independent — different Spectra models may have buttons in different positions.
+`_find_button_by_label()` scans button0-button3 labels for a case-insensitive match. This makes the integration model-independent.
 
 ## Run Tracking
 
@@ -133,18 +174,21 @@ Dismiss screensaver if needed, then `BUTTON0` on idle page 4 (found by label "FL
 | Temp samples | `water_temp_f` appended | Always (if > 32.1, filters disconnected sensor) |
 | Time to fill | `monotonic() - run_start` when toggle first goes 1→0 | First toggle transition only |
 
-### PPM collection rules (important for data quality):
+### PPM collection rules:
 
 1. **Ignore first 60 seconds** of run entirely — TDS erratic during startup
 2. **Only collect while `toggle_tank == "0"`** — overboard water is pre-fill quality
 3. **30-second post-toggle delay** — when toggle changes 1→0, water in pipes is still old quality
-4. **Edge case**: if toggle starts at "0" (rare), `_filling_started = True` immediately, PPM collection scheduled via `call_later(60s)` (Issue #9 fix)
+4. **Edge case**: if toggle starts at "0" (rare), `_filling_started = True` immediately, PPM collection scheduled via `call_later(60s)`
 
 ### Run record storage:
 - `RunRecord` dataclass with 12 fields (models.py)
 - Stored in `.storage/spectra_watermaker_history_{entry_id}` as JSON
 - Last 50 runs kept (configurable via DEFAULT_HISTORY_LIMIT)
 - Exposed via `spectra_watermaker.get_run_history` service
+
+### Mid-run HA restart:
+If HA restarts while the watermaker is running, the coordinator detects running state on reconnect and starts tracking from that point. The RunRecord will have `data_incomplete: true`, and liters/PPM/hours will only reflect the portion tracked after reconnect. The run before the restart is lost.
 
 ## Persistent Storage
 
@@ -155,7 +199,7 @@ Two `Store` files in `.storage/`:
 {
   "prefilter_last_changed": "2026-04-18T12:00:00+00:00",
   "prefilter_hours": 45.2,
-  "last_flush": "2026-04-18T14:38:41+00:00",
+  "last_flush": "2026-04-19T15:44:38+00:00",
   "total_liters": 1250.5,
   "total_hours": 28.3,
   "run_duration": 2.0,
@@ -168,15 +212,15 @@ Two `Store` files in `.storage/`:
 {
   "runs": [
     {
-      "start_time": "2026-04-18T13:00:00+00:00",
-      "end_time": "2026-04-18T14:30:00+00:00",
-      "duration_minutes": 90.0,
-      "liters_produced": 270.5,
+      "start_time": "2026-04-19T14:30:00+00:00",
+      "end_time": "2026-04-19T15:36:43+00:00",
+      "duration_minutes": 66.7,
+      "liters_produced": 180.5,
       "time_to_fill_seconds": 120,
       "min_ppm": 285.0, "max_ppm": 315.0, "avg_ppm": 298.5,
       "avg_feed_pressure_psi": 194.5,
       "avg_water_temp_f": 82.4,
-      "stop_reason": "timer",
+      "stop_reason": "manual",
       "data_incomplete": false
     }
   ]
@@ -235,12 +279,13 @@ All entities follow the same pattern:
 - `_attr_has_entity_name = True` (uses device name as prefix)
 - `_attr_translation_key` for localized names
 - `_attr_unique_id = f"{entry_id}_{key}"`
-- Shared `device_info` dict grouping all entities under one device
+- Shared `device_info` dict grouping all entities under one device (name: "Watermaker")
 - Subscribe to coordinator updates via `async_add_listener`
 
 ### Sensors (sensor.py)
-- 30 sensors defined as `SpectraSensorDescription` dataclasses
+- 31 sensors defined as `SpectraSensorDescription` dataclasses
 - Each has a `value_fn: Callable[[SpectraCoordinator], Any]` lambda
+- Key sensors (flow, pressure, TDS, temp) return `None` when not running to avoid showing stale idle values
 - Optional `attr_fn` for extra state attributes
 - `_days_since()` helper for prefilter/flush age calculations
 - Diagnostic entities: `entity_category=EntityCategory.DIAGNOSTIC` (hidden by default)
@@ -265,7 +310,17 @@ All entities follow the same pattern:
 - Currently only exposes `auto_off_delay` (minutes, slider 0-60)
 - Triggers full reload on change
 
-## Review Issues Fixed
+## Bugs Fixed (post-initial release)
+
+| Version | Issue | Fix |
+|---------|-------|-----|
+| 0.2.1 | Entity names truncated ("Spectra NEWPORT 1000 Product...") | Shortened device name to "Watermaker" |
+| 0.2.2 | Elapsed/remaining time always unknown | Added periodic page polling (navigate through running pages) |
+| 0.2.4 | Sensors blank after HA restart | Fixed startup: connect WS when outlet entity not yet loaded (default to connecting instead of assuming off) |
+| 0.2.5 | Elapsed time showed "Tank --" | Fixed field mapping: elapsed on pages 30/31, remaining on pages 5/6 (different pages). Poll every 15s through all pages. |
+| 0.2.6 | TDS showed 2440ppm, temp 0°C when idle | Sensors now return None when not running (stale membrane/sensor readings hidden) |
+
+## Review Issues Fixed (initial code review)
 
 | # | Issue | Fix |
 |---|-------|-----|
@@ -287,28 +342,33 @@ All entities follow the same pattern:
 5. **Liters are estimates**: Integrated from ~1/sec flow samples. Gaps from reconnections cause undercounting.
 6. **No run extension**: Can't extend a run mid-production. Must stop (8min flush) and restart.
 7. **CONF_POWER_SENSOR**: Collected in config but not yet used. Reserved for future power-based state detection.
+8. **Mid-run HA restart**: Run tracking picks up from reconnect moment. Liters/PPM/hours before the restart are lost. RunRecord gets `data_incomplete: true`.
+9. **Time polling changes the physical display**: The 15s page navigation is visible on the Spectra's touchscreen. Not harmful but may be surprising if someone is looking at it.
 
-## Testing Checklist (for live testing)
+## Testing Checklist
 
-- [ ] Config flow: add integration with watermaker IP
-- [ ] Config flow: add with power switch + tank sensors
-- [ ] Sensors populate when watermaker is idle
+- [x] Config flow: add integration with watermaker IP
+- [x] Config flow: add with power switch + tank sensors
+- [ ] Sensors populate correctly when watermaker is idle (values hidden for running-only sensors)
 - [ ] Start button: powers on, dismisses prompts, starts production
-- [ ] Sensors update ~1/sec during production
-- [ ] Water quality shows correct level for TDS range
-- [ ] Stop button: stops production, enters flush
+- [x] Sensors update ~1/sec during production
+- [x] Water quality shows correct level for TDS range (showed "good" at ~300ppm)
+- [x] Stop button: stops production, enters flush
 - [ ] Flush progress shows 0→100%
-- [ ] Flush complete: last_flush timestamp updates, auto-off timer starts
+- [x] Flush complete: last_flush timestamp updates
 - [ ] Auto power-off fires after configured delay
 - [ ] Tank full auto-stop: debounce works, stop fires after 30s sustained
-- [ ] Run history: service returns correct data
+- [ ] Run history: service returns correct data with full run
 - [ ] Prefilter reset: timestamp and hours both reset
-- [ ] Total liters: only counts while filling tank (not overboard)
-- [ ] HA restart: totals, prefilter, history survive restart
-- [ ] Power cycle: boot prompt auto-dismissed, reaches idle
+- [x] Total liters: only counts while filling tank (not overboard)
+- [x] HA restart mid-run: reconnects, detects running state
+- [x] Power cycle: boot prompt auto-dismissed (POWER INTERRUPT), reaches idle
 - [ ] External start (from touchscreen): detected, tracked, no auto-off
 - [ ] Both WS down: error state after 30s
 - [ ] Energy dashboard: total_liters shows up as water consumption
+- [x] Elapsed time reads from page 30/31 correctly
+- [x] Remaining time reads from page 5/6 correctly
+- [ ] Run progress bar shows 0-92% during run, 92-100% during flush
 
 ## File Quick Reference
 
@@ -316,10 +376,13 @@ All entities follow the same pattern:
 |-------------------|---------------|
 | WebSocket protocol / parsing | `client.py` |
 | Command sequences (start/stop/flush) | `protocol.py` |
-| State machine logic | `coordinator.py` (lines 559-623) |
-| Run tracking / PPM rules | `coordinator.py` (lines 624-781) |
-| Tank auto-stop | `coordinator.py` (lines 838-910) |
-| Auto power-off | `coordinator.py` (lines 912-940) |
+| State machine logic | `coordinator.py` → `_handle_state_transition()` |
+| Run tracking / PPM rules | `coordinator.py` → `_track_run_data()`, `_handle_toggle_change()` |
+| Time extraction from pages | `coordinator.py` → `_extract_ui_data()` |
+| Time polling loop | `coordinator.py` → `_poll_time_loop()` |
+| Tank auto-stop | `coordinator.py` → `_subscribe_tanks()`, `_on_tank_state_change()` |
+| Auto power-off | `coordinator.py` → `_start_auto_off_timer()`, `_auto_off_fire()` |
+| Sensor visibility (when to show/hide) | `sensor.py` → `value_fn` lambdas |
 | Add/modify a sensor | `sensor.py` (add to SENSOR_DESCRIPTIONS tuple) |
 | Add/modify a binary sensor | `binary_sensor.py` |
 | Persistent data fields | `storage.py` |
@@ -327,3 +390,4 @@ All entities follow the same pattern:
 | Service handlers | `services.py` + `services.yaml` |
 | Constants / thresholds | `const.py` |
 | UI text / translations | `strings.json` + `translations/en.json` |
+| Dashboard cards | `/var/lib/homeassistant/homeassistant/.storage/lovelace.dashboard_watermaker` (local, not in HACS) |
