@@ -342,11 +342,15 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Determine initial state based on power switch
         if self._power_switch:
             power_state = self.hass.states.get(self._power_switch)
-            if power_state and power_state.state == "on":
+            if power_state and power_state.state == "off":
+                # Outlet is definitively off — don't connect
+                self._state = WatermakerState.OFF
+            else:
+                # Outlet is on, unavailable, or unknown at startup — try to connect.
+                # During HA startup, entities may not be loaded yet, so we default
+                # to attempting connection rather than assuming off.
                 self._state = WatermakerState.BOOTING
                 await self._client.connect()
-            else:
-                self._state = WatermakerState.OFF
         else:
             # No power switch — assume always powered
             self._state = WatermakerState.BOOTING
