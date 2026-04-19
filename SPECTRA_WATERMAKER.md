@@ -768,21 +768,61 @@ Use HA's `Store` helper (`homeassistant.helpers.storage.Store`) — a JSON file 
 
 **Daily production** (`sensor.spectra_total_liters_today`) uses HA's `utility_meter` pattern — the coordinator accumulates liters from flow readings and resets at midnight. Persisted via `RestoreEntity` so it survives restarts within the same day.
 
-### Known Issues & Edge Cases
+### Failure Modes & Edge Cases
 
-1. **Single WebSocket client** — The Spectra may only support 1–2 concurrent WebSocket connections. The integration must be the sole client; having the Spectra web UI open simultaneously may cause dropped messages or hung connections. Reconnect logic must handle this.
+#### WebSocket Disconnections
 
-2. **Mid-run HA restart** — If HA restarts while the watermaker is running, the integration must detect the running state from the first port 9000 messages and resume tracking. Run history for that session will have incomplete data (no start timestamp, partial TDS stats). Best-effort: use `p_flow > 0` from port 9001 to confirm running, start tracking from the reconnect moment.
+1. **Heartbeat / staleness** — Port 9001 sends ~1 msg/sec. If no message for 5 seconds, mark sensors `unavailable` and attempt reconnect with exponential backoff (1s, 2s, 4s, ... max 60s).
 
-3. **Start safety** — Reject start commands if state is not `idle`. Reject stop commands if state is `off` or `idle`. Log warnings, don't crash.
+2. **Port 9001 drops mid-run** — Sensors go unavailable, but watermaker keeps running (Spectra owns the timer). Run history for this run gets `data_incomplete: true`. Liters/PPM stats will be underreported. Tank-full auto-stop still works if port 9000 is up (can send stop command) but has no fresh tank data — relies on HA entity state listener which is independent of the WebSocket.
 
-4. **f_flow always reads 0** — On our Newport 1000, the feed flow sensor (`f_flow`) always reports 0. Mark this entity as `entity_category: diagnostic` so it's hidden by default. Other Spectra models may report valid values.
+3. **Port 9000 drops mid-run** — Cannot send commands (stop, toggle). Watermaker runs on its own timer. Tank-full auto-stop cannot fire. On reconnect, read state from first message before doing anything. May land on unexpected page — handle gracefully.
 
-5. **Model-specific button mapping** — Page 4 and page 37 button labels vary by model/firmware. The integration should read the `button0`/`button1` labels from the WebSocket message to determine which button does what, rather than hardcoding. E.g., find the button where the label is "START".
+4. **Both ports drop** — Keep last-known state for 30 seconds, then transition to `error`. Check outlet switch entity — if outlet is on but WS is gone, the Spectra may have crashed. Log warning.
 
-6. **Page 12 input fragility** — The text input page (12) opened by clicking LABEL0 can disrupt the WebSocket message flow. The HA-side timer approach (Approach B) avoids this entirely.
+5. **Spectra reboots mid-run** — WS reconnects to page 101 → page 10 POWER INTERRUPT → page 4. Run was killed without flush. Close run history with `stop_reason: "device_reboot"`. Auto-dismiss boot prompts as normal.
 
-7. **Autostore "Not running"** — After stopping a flush early, the autostore countdown shows "Not running" instead of a countdown. Handle this as a string, not parse as duration.
+#### Power Failures
+
+6. **HA host loses power while watermaker runs** — Watermaker continues on its own timer. On HA restart, integration reconnects and detects running state, resumes tracking with incomplete history. **Critical risk**: if the outlet switch defaults to "off" on power restore (Zigbee switch firmware), it will kill the watermaker mid-run. **User must configure outlet switch to "restore last state" on power loss.** Document prominently.
+
+7. **Power flicker (outlet toggles off/on quickly)** — Watermaker reboots, shows POWER INTERRUPT. Integration detects: was tracking a run → WS dropped → reconnected to idle. Close run with `stop_reason: "power_loss"`.
+
+8. **Outlet switch loses Zigbee connectivity** — Auto power-off can't fire. Not dangerous, just stays on. Log warning, retry.
+
+#### Command Sequence Failures
+
+9. **Start sequence timeout** — Every step in the start sequence must verify the expected page appeared within 5 seconds. If not, attempt rollback: send BUTTON4 (back) on current page, return to idle, report error. Do not leave the Spectra stuck on an intermediate page (37, 29, 12).
+
+10. **Page 12 input failure** — If LABEL0 opens page 12 but WS goes quiet: wait 5 seconds, send data anyway, wait 5 more seconds for page 29 to reappear. If still stuck after 10 seconds, send CANCEL, then press BUTTON3 on page 29 with the Spectra's existing value. Log warning about duration not being set.
+
+11. **Alarm/error state on start** — Instead of page 37 after pressing START, the Spectra shows an error page (44/45: warning templates). Detect by checking `label0` for alarm text. Set `state: error`, expose error text via `sensor.spectra_state` attributes. Do not retry automatically.
+
+12. **Command lock** — Reject new start/stop commands while a command sequence is in progress. Queue or return error. Prevents state machine corruption from rapid clicks.
+
+#### State Detection Robustness
+
+13. **Concurrent web UI user** — Someone browses the Spectra web UI, navigating to settings pages. Port 9000 reports their page (e.g., page 7), confusing page-based state detection. **Fix**: cross-reference port 9001 data. If `p_flow > 0` and `feed_p > 100 psi`, the watermaker is running regardless of what page the UI shows. Use port 9001 as ground truth for running/idle, port 9000 for details (remaining time, toggles, commands).
+
+14. **External flush stop** — User stops flush from the physical screen or web UI. Integration sees `flushing` → `idle` without flush completing. Handle gracefully — start auto-off timer if applicable, don't treat as error.
+
+15. **Autostore "Not running"** — After stopping a flush early, autostore countdown shows "Not running" instead of a duration. Parse as string, handle `None`/unavailable gracefully.
+
+#### Data Integrity
+
+16. **Flow rate integration gaps** — Liters are estimated by integrating `p_flow` at ~1/sec. Missed samples (reconnect, HA restart) cause undercounting. `state_class: total_increasing` handles this gracefully in HA long-term stats. Document that per-run liters are estimates.
+
+17. **TDS readings during toggle transition** — When `toggle_tank` flips 1→0, the water in the lines is still overboard-quality. Wait 30 seconds after the transition before starting PPM tracking (in addition to the 60-second startup ignore). This avoids inflating min/max PPM with transition-period readings.
+
+18. **`toggle_tank` visibility** — Only reported on port 9000 running pages. If someone navigates away (settings, etc.), we miss the transition. Accept this limitation — if UI is being used concurrently, PPM tracking may be incomplete. Mark run as `data_incomplete: true`.
+
+#### Other
+
+19. **f_flow always reads 0** — On Newport 1000, feed flow sensor reports 0. Mark as `entity_category: diagnostic` (hidden by default). Other models may report valid values.
+
+20. **Model-specific button mapping** — Page 4 and 37 button labels vary by model/firmware. Read `button0`/`button1` label text from the WebSocket message to find the right button (e.g., find the one labeled "START") rather than hardcoding button numbers.
+
+21. **Multiple integration instances** — If someone configures two Spectra watermakers, each gets its own coordinator with independent WebSocket connections. No shared state. Entity IDs should include the device name for uniqueness.
 
 ### Architecture Notes
 
