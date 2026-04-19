@@ -1,6 +1,9 @@
 # Spectra Watermaker Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/release/tomerddd/ha-spectra-watermaker.svg)](https://github.com/tomerddd/ha-spectra-watermaker/releases)
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=tomerddd&repository=ha-spectra-watermaker&category=integration)
 
 Home Assistant integration for **Spectra Watermakers** equipped with the [Spectra Connect](https://spectrawatermakers.com) module (built-in Ethernet on Newport 1000/400c, or external module on other models). Provides full monitoring and control via the watermaker's WebSocket interface — no cloud, no polling, pure local push.
 
@@ -51,7 +54,7 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
    - **Power outlet switch** — a switch entity that controls power to the watermaker
    - **Power consumption sensor** — for secondary state detection (watts)
    - **Port/Starboard tank level sensors** — from any system (SignalK, Victron, etc.)
-   - **Tank full threshold** — percentage at which to auto-stop (default: 95%)
+   - **Tank full threshold** — percentage at which to auto-stop (default: 98%)
 
 ## Entities
 
