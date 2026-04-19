@@ -848,17 +848,21 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         page = ui.page
 
         # Running pages: extract elapsed and remaining time
+        # Page 5: label5 = remaining time, label8 = "Tank --" (NOT elapsed)
+        # Page 6: label5 = remaining time, label8 = "Tank --" (NOT elapsed)
+        # Page 30: label1 = elapsed time (label2 = "Elapsed time")
+        # Page 31: label8 = elapsed time (label9 = "Elapsed time")
+        # Page 32: no time data
         if page == "5":
-            # Page 5 has remaining time in label5
             self._remaining_time = ui.label5 if ui.label5 else self._remaining_time
-            self._elapsed_time = ui.label8 if ui.label8 else self._elapsed_time
         elif page == "6":
             self._remaining_time = ui.label5 if ui.label5 else self._remaining_time
-            self._elapsed_time = ui.label8 if ui.label8 else self._elapsed_time
         elif page == "30":
-            self._elapsed_time = ui.label8 if ui.label8 else self._elapsed_time
+            if ui.label1 and ui.label2 and "elapsed" in ui.label2.lower():
+                self._elapsed_time = ui.label1
         elif page == "31":
-            self._elapsed_time = ui.label8 if ui.label8 else self._elapsed_time
+            if ui.label8 and ui.label9 and "elapsed" in ui.label9.lower():
+                self._elapsed_time = ui.label8
 
         # Filter condition
         fc = ui.filter_condition_pct
@@ -1008,21 +1012,22 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._time_poll_task = None
 
     async def _poll_time_loop(self) -> None:
-        """Navigate to page 5 every 30s while running to read elapsed/remaining time."""
+        """Navigate through pages while running to read elapsed and remaining time.
+
+        Remaining time is on pages 5/6, elapsed time is on pages 30/31.
+        Cycles: navigate right every 15s to pass through all running pages.
+        """
         try:
             while self._state in (WatermakerState.RUNNING, WatermakerState.FLUSHING):
                 if (
                     self._ui_connected
                     and not self._protocol.command_in_progress
-                    and self._ui_state.page not in ("5", "6")
                 ):
-                    # Navigate right until we hit page 5
                     page = self._ui_state.page
                     if page in ("5", "6", "30", "31", "32", "2"):
                         await self._client.send_command(page, "BUTTON2")
-                        # Wait briefly for page to update
                         await asyncio.sleep(2.0)
-                await asyncio.sleep(30.0)
+                await asyncio.sleep(15.0)
         except asyncio.CancelledError:
             pass
 
