@@ -134,6 +134,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._tank_full_timer: asyncio.TimerHandle | None = None
         self._tank_unsub: list[CALLBACK_TYPE] = []
 
+        # Periodic time polling task
+        self._time_poll_task: asyncio.Task[None] | None = None
+
         # Elapsed/remaining time from UI
         self._elapsed_time: str | None = None
         self._remaining_time: str | None = None
@@ -315,6 +318,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_stop(self) -> None:
         """Stop the coordinator: disconnect WebSockets, cancel timers."""
+        self._stop_time_polling()
         self._cancel_auto_off_timer()
         self._cancel_tank_full_timer()
 
@@ -577,6 +581,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Entering RUNNING
         if new_state == WatermakerState.RUNNING and old_state != WatermakerState.RUNNING:
             self._start_run_tracking()
+            self._start_time_polling()
 
         # RUNNING -> FLUSHING (normal stop)
         if old_state == WatermakerState.RUNNING and new_state == WatermakerState.FLUSHING:
@@ -597,6 +602,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # FLUSHING -> IDLE (flush complete)
         if old_state == WatermakerState.FLUSHING and new_state == WatermakerState.IDLE:
+            self._stop_time_polling()
             self._on_flush_complete()
 
         # Check for external start (running without integration commanding it)
@@ -938,6 +944,42 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._auto_off_timer:
             self._auto_off_timer.cancel()
             self._auto_off_timer = None
+
+    # ──────────────────────────────────────────────
+    # Periodic time polling
+    # ──────────────────────────────────────────────
+
+    def _start_time_polling(self) -> None:
+        """Start periodic navigation to page 5 to read elapsed/remaining time."""
+        self._stop_time_polling()
+        self._time_poll_task = self.hass.async_create_task(
+            self._poll_time_loop(), name="spectra_time_poll"
+        )
+
+    def _stop_time_polling(self) -> None:
+        """Stop time polling."""
+        if self._time_poll_task and not self._time_poll_task.done():
+            self._time_poll_task.cancel()
+            self._time_poll_task = None
+
+    async def _poll_time_loop(self) -> None:
+        """Navigate to page 5 every 30s while running to read elapsed/remaining time."""
+        try:
+            while self._state in (WatermakerState.RUNNING, WatermakerState.FLUSHING):
+                if (
+                    self._ui_connected
+                    and not self._protocol.command_in_progress
+                    and self._ui_state.page not in ("5", "6")
+                ):
+                    # Navigate right until we hit page 5
+                    page = self._ui_state.page
+                    if page in ("5", "6", "30", "31", "32", "2"):
+                        await self._client.send_command(page, "BUTTON2")
+                        # Wait briefly for page to update
+                        await asyncio.sleep(2.0)
+                await asyncio.sleep(30.0)
+        except asyncio.CancelledError:
+            pass
 
     # ──────────────────────────────────────────────
     # Both-down detection
