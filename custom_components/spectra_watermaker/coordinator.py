@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -272,6 +273,46 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def autostore_countdown(self) -> str | None:
         """Autostore countdown string."""
         return self._autostore_countdown
+
+    @property
+    def run_progress(self) -> float | None:
+        """Run progress as a percentage (0-100).
+
+        RUNNING: 0-92% based on elapsed/(elapsed+remaining).
+        FLUSHING: 92-100% based on flush gauge progress.
+        IDLE/OFF/other: None.
+        """
+        if self._state == WatermakerState.RUNNING:
+            elapsed = self._parse_time_to_minutes(self._elapsed_time)
+            remaining = self._parse_time_to_minutes(self._remaining_time)
+            if elapsed is None or remaining is None:
+                return None
+            total = elapsed + remaining
+            if total <= 0:
+                return None
+            return round(elapsed / total * 92.0, 1)
+        if self._state == WatermakerState.FLUSHING:
+            fp = self._flush_progress
+            if fp is None:
+                return None
+            return round(92.0 + (fp / 100.0 * 8.0), 1)
+        return None
+
+    def _parse_time_to_minutes(self, time_str: str | None) -> float | None:
+        """Parse a time string like '1h 20m', '45m', '2h' into minutes."""
+        if not time_str:
+            return None
+        time_str = time_str.strip()
+        total = 0.0
+        hours_match = re.search(r'(\d+)\s*h', time_str)
+        mins_match = re.search(r'(\d+)\s*m', time_str)
+        if not hours_match and not mins_match:
+            return None
+        if hours_match:
+            total += float(hours_match.group(1)) * 60
+        if mins_match:
+            total += float(mins_match.group(1))
+        return total
 
     @property
     def last_run(self) -> RunRecord | None:

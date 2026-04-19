@@ -187,6 +187,14 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         icon="mdi:water-sync",
         value_fn=lambda c: c.flush_progress,
     ),
+    SpectraSensorDescription(
+        key="run_progress",
+        translation_key="run_progress",
+        native_unit_of_measurement="%",
+        icon="mdi:progress-clock",
+        suggested_display_precision=0,
+        value_fn=lambda c: c.run_progress,
+    ),
     # ── Production tracking ──
     SpectraSensorDescription(
         key="total_liters",

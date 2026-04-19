@@ -68,6 +68,7 @@
       "battery_voltage": { "name": "Battery voltage" },
       "autostore_countdown": { "name": "Autostore countdown" },
       "flush_progress": { "name": "Flush progress" },
+      "run_progress": { "name": "Run progress" },
       "total_liters": { "name": "Total liters produced" },
       "total_hours": { "name": "Total production hours" },
       "last_run_duration": { "name": "Last run duration" },
