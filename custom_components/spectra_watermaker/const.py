@@ -9,6 +9,7 @@ CONF_POWER_SENSOR = "power_sensor"
 CONF_TANK_SENSOR_PORT = "tank_sensor_port"
 CONF_TANK_SENSOR_STBD = "tank_sensor_stbd"
 CONF_TANK_FULL_THRESHOLD = "tank_full_threshold"
+CONF_AUTO_OFF_DELAY = "auto_off_delay"
 
 # Defaults
 DEFAULT_WS_UI_PORT = 9000
@@ -18,9 +19,6 @@ DEFAULT_TANK_FULL_DEBOUNCE_SEC = 30
 DEFAULT_COMMAND_DELAY_MS = 1500
 DEFAULT_AUTO_OFF_MINUTES = 5
 DEFAULT_RUN_DURATION_HOURS = 2.0
-
-# Config keys
-CONF_AUTO_OFF_DELAY = "auto_off_delay"
 
 # WebSocket
 WS_SUBPROTOCOL = "dumb-increment-protocol"
@@ -40,6 +38,8 @@ STOP_REASON_MANUAL = "manual"
 STOP_REASON_TIMER = "timer"
 STOP_REASON_TANK_FULL = "tank_full"
 STOP_REASON_ERROR = "error"
+STOP_REASON_POWER_LOSS = "power_loss"
+STOP_REASON_DEVICE_REBOOT = "device_reboot"
 
 # Spectra page IDs (running)
 PAGES_RUNNING = {"5", "6", "30", "31", "32"}
@@ -68,3 +68,7 @@ QUALITY_THRESHOLDS = [
     (700, QUALITY_POOR),
 ]
 # Above 700 → QUALITY_UNDRINKABLE
+
+# Device info
+MANUFACTURER = "Spectra Watermakers"
+DEFAULT_MODEL = "Newport 1000"

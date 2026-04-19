@@ -36,5 +36,103 @@
     "abort": {
       "already_configured": "This watermaker is already configured."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Spectra Watermaker Options",
+        "data": {
+          "auto_off_delay": "Auto power-off delay"
+        },
+        "data_description": {
+          "auto_off_delay": "Minutes to wait after idle before turning off the outlet. Set to 0 to disable."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "state": { "name": "State" },
+      "product_flow": { "name": "Product flow" },
+      "boost_pressure": { "name": "Boost pressure" },
+      "feed_pressure": { "name": "Feed pressure" },
+      "product_tds": { "name": "Product TDS" },
+      "water_temperature": { "name": "Water temperature" },
+      "water_quality": { "name": "Water quality" },
+      "water_destination": { "name": "Water destination" },
+      "filter_condition": { "name": "Filter condition" },
+      "elapsed_time": { "name": "Elapsed time" },
+      "remaining_time": { "name": "Remaining time" },
+      "feed_flow": { "name": "Feed flow" },
+      "feed_tds": { "name": "Feed TDS" },
+      "battery_voltage": { "name": "Battery voltage" },
+      "autostore_countdown": { "name": "Autostore countdown" },
+      "flush_progress": { "name": "Flush progress" },
+      "total_liters": { "name": "Total liters produced" },
+      "total_hours": { "name": "Total production hours" },
+      "last_run_duration": { "name": "Last run duration" },
+      "last_run_avg_ppm": { "name": "Last run avg PPM" },
+      "last_run_start": { "name": "Last run start" },
+      "last_run_end": { "name": "Last run end" },
+      "last_run_liters": { "name": "Last run liters" },
+      "last_run_time_to_fill": { "name": "Last run time to fill" },
+      "last_run_stop_reason": { "name": "Last run stop reason" },
+      "last_flush": { "name": "Last flush" },
+      "days_since_flush": { "name": "Days since flush" },
+      "prefilter_last_changed": { "name": "Prefilter last changed" },
+      "prefilter_days_ago": { "name": "Prefilter days ago" },
+      "prefilter_hours_since_change": { "name": "Prefilter hours since change" }
+    },
+    "binary_sensor": {
+      "connected": { "name": "Connected" },
+      "running": { "name": "Running" },
+      "filling_tank": { "name": "Filling tank" }
+    },
+    "button": {
+      "start": { "name": "Start" },
+      "stop": { "name": "Stop" },
+      "flush": { "name": "Flush" },
+      "reset_prefilter": { "name": "Reset prefilter" }
+    },
+    "switch": {
+      "power": { "name": "Power" }
+    },
+    "select": {
+      "water_destination": { "name": "Water destination" }
+    },
+    "number": {
+      "run_duration": { "name": "Run duration" },
+      "tank_full_threshold": { "name": "Tank full threshold" }
+    }
+  },
+  "services": {
+    "start": {
+      "name": "Start watermaker",
+      "description": "Start the watermaker with the full boot and start sequence.",
+      "fields": {
+        "duration_hours": {
+          "name": "Duration",
+          "description": "Run duration in hours (0.5-8.0). Uses the configured default if omitted."
+        }
+      }
+    },
+    "stop": {
+      "name": "Stop watermaker",
+      "description": "Stop the watermaker. Triggers a freshwater flush cycle."
+    },
+    "flush": {
+      "name": "Flush watermaker",
+      "description": "Trigger a manual freshwater flush from idle."
+    },
+    "get_run_history": {
+      "name": "Get run history",
+      "description": "Returns the last N production runs with stats.",
+      "fields": {
+        "limit": {
+          "name": "Limit",
+          "description": "Number of runs to return (1-50, default 10)."
+        }
+      }
+    }
   }
 }

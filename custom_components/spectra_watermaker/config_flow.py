@@ -2,32 +2,54 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any
 
+import websockets.exceptions
+
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
+from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
-    DOMAIN,
+    CONF_AUTO_OFF_DELAY,
     CONF_HOST,
-    CONF_POWER_SWITCH,
     CONF_POWER_SENSOR,
+    CONF_POWER_SWITCH,
+    CONF_TANK_FULL_THRESHOLD,
     CONF_TANK_SENSOR_PORT,
     CONF_TANK_SENSOR_STBD,
-    CONF_TANK_FULL_THRESHOLD,
+    DEFAULT_AUTO_OFF_MINUTES,
     DEFAULT_TANK_FULL_THRESHOLD,
+    DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class SprectraWatermakerConfigFlow(ConfigFlow, domain=DOMAIN):
+class SpectraWatermakerConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Spectra Watermaker Assistant."""
 
     VERSION = 1
+
+    def __init__(self) -> None:
+        """Initialize the config flow."""
+        self._host: str = ""
+        self._device_name: str = "Watermaker"
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Get the options flow handler."""
+        return SpectraWatermakerOptionsFlow(config_entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -52,17 +74,20 @@ class SprectraWatermakerConfigFlow(ConfigFlow, domain=DOMAIN):
                     open_timeout=5,
                 ) as ws:
                     msg = await asyncio.wait_for(ws.recv(), timeout=5)
-                    import json
-
                     data = json.loads(msg)
-                    device_name = data.get("device", "Spectra Watermaker")
-            except Exception:
+                    self._device_name = data.get("device", "Spectra Watermaker")
+            except (
+                OSError,
+                asyncio.TimeoutError,
+                ValueError,
+                json.JSONDecodeError,
+                websockets.exceptions.WebSocketException,
+            ):
                 _LOGGER.exception("Failed to connect to Spectra at %s", host)
                 errors["base"] = "cannot_connect"
             else:
                 # Store host and device name, move to options step
                 self._host = host
-                self._device_name = device_name
                 return await self.async_step_options()
 
         return self.async_show_form(
@@ -125,6 +150,45 @@ class SprectraWatermakerConfigFlow(ConfigFlow, domain=DOMAIN):
                             max=100,
                             step=1,
                             unit_of_measurement="%",
+                            mode="slider",
+                        ),
+                    ),
+                }
+            ),
+        )
+
+
+class SpectraWatermakerOptionsFlow(OptionsFlow):
+    """Handle options flow for Spectra Watermaker."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = self._config_entry.options
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_AUTO_OFF_DELAY,
+                        default=current.get(
+                            CONF_AUTO_OFF_DELAY, DEFAULT_AUTO_OFF_MINUTES
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0,
+                            max=60,
+                            step=1,
+                            unit_of_measurement="min",
                             mode="slider",
                         ),
                     ),
