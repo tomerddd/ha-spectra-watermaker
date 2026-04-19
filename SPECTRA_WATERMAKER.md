@@ -481,7 +481,8 @@ The integration should be configurable entirely through the HA UI (config flow),
 3. **Power sensor** (optional) — entity selector for a `sensor.*` entity that measures the outlet's power draw (W). Used as a secondary state confirmation and for the existing power-based status logic as fallback.
 4. **Tank sensor — port** (optional) — entity selector for a `sensor.*` that provides port tank level (%). May come from SignalK, Victron, or any other system.
 5. **Tank sensor — starboard** (optional) — entity selector for a `sensor.*` that provides starboard tank level (%).
-6. **Tank full auto-stop threshold** (optional, default: 95%) — `number` input (50–100%). When any configured tank sensor stays at or above this value for 30 continuous seconds, the integration sends a stop command. The 30s debounce avoids false triggers from sensor noise/sloshing.
+6. **Tank full auto-stop threshold** (optional, default: 98%) — `number` input (50–100%). When any configured tank sensor stays at or above this value for 30 continuous seconds, the integration sends a stop command. The 30s debounce avoids false triggers from sensor noise/sloshing. Threshold must prevent any tank exceeding 100%.
+7. **Auto power-off delay** (optional, default: 5 min) — minutes to wait after reaching idle before turning off the outlet. Set to 0 to disable auto-off.
 
 ### Entities to Create
 
@@ -518,7 +519,13 @@ The integration should be configurable entirely through the HA UI (config flow),
 | `sensor.spectra_last_run_end` | `timestamp` | When the last production run ended (transition to flushing) |
 | `sensor.spectra_last_run_duration` | `duration` | Total production time of last run (excludes flush) |
 | `sensor.spectra_last_run_liters` | `float` (L) | Estimated liters produced in last run (flow rate integrated over time) |
-| `sensor.spectra_total_liters_today` | `float` (L) | Total liters produced today (utility meter style, resets daily) |
+
+**Production tracking** (for HA Energy Dashboard):
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `sensor.spectra_total_liters` | `float` (L) | Total liters produced, ever-increasing. `device_class: water`, `state_class: total_increasing`. Compatible with HA Energy Dashboard water tracking. Persisted via `RestoreEntity`. |
+| `sensor.spectra_total_hours` | `float` (h) | Total hours of production time. `state_class: total_increasing`. Persisted. |
 
 **Binary sensors**:
 
@@ -543,35 +550,40 @@ The integration should be configurable entirely through the HA UI (config flow),
 | `button.spectra_stop` | Send stop command (works from running or flushing) |
 | `button.spectra_flush` | Trigger freshwater flush from idle |
 | `button.spectra_reset_prefilter` | Reset prefilter change date to now |
-| `switch.spectra_watermaker` | On = start with last-used duration, Off = stop. Simple dashboard toggle. |
+| `switch.spectra_watermaker` | On = start with default duration, Off = stop. Simple dashboard toggle. |
 | `select.spectra_water_destination` | Toggle tank vs. overboard while running |
-| `number.spectra_run_duration` | Duration for next run in hours (0.5–8.0, default 2.0). Persisted. |
-| `number.spectra_tank_full_threshold` | Auto-stop threshold (50–100%, default 95%) |
+| `number.spectra_run_duration` | Duration for next start in hours (0.5–8.0, default 2.0). Persisted. Sets the value on the Spectra when starting. |
+| `number.spectra_tank_full_threshold` | Auto-stop threshold (50–100%, default 98%) |
 
 **Services** (for automations needing parameters):
 
 | Service | Parameters | Action |
 |---------|------------|--------|
-| `spectra_watermaker.start` | `duration_hours` (float, optional — uses `number.spectra_run_duration` if omitted) | Power on → boot → dismiss prompts → start autorun for specified duration |
+| `spectra_watermaker.start` | `duration_hours` (float, optional — uses `number.spectra_run_duration` if omitted) | Power on → boot → dismiss prompts → set duration on Spectra → start autorun |
 | `spectra_watermaker.stop` | — | Stop (triggers flush) |
 | `spectra_watermaker.get_run_history` | `limit` (int, default 10) | Returns last N runs as response data |
 
 ### Start Duration — Implementation
 
-The Spectra's page 29 input sequence (LABEL0 → page 12 text input → submit) is fragile over WebSocket. Two approaches:
+The Spectra owns the timer. The integration sets the duration on the Spectra via the page 12 input sequence, then the Spectra runs its own countdown. The integration reads remaining time from port 9000 at regular intervals — no HA-side timer.
 
-**Approach A — Set duration via page 12 input** (risky):
+**Start sequence with duration** (1500ms between each step):
 ```
-page 4 BUTTON1 → page 37 BUTTON0 → page 29 LABEL0 → page 12 data:"1.5" → page 29 BUTTON3
+page 10 BUTTON0              # Dismiss screensaver (if active)
+page 4  BUTTON1              # Press START
+page 37 BUTTON0              # Select AUTORUN
+page 29 BUTTON2              # Select hours
+page 29 LABEL0               # Open input field → navigates to page 12
+page 12 data:"1.5"           # Set duration
+  → returns to page 29
+page 29 BUTTON3              # Press OK → starts
 ```
-Risk: LABEL0 opens an input page that may disrupt the WebSocket stream. Needs careful timeout/retry handling.
 
-**Approach B — Use the persisted default** (reliable):
-The Spectra remembers the last-used quantity. Set it once manually on the physical unit, then the integration just presses OK on page 29 without changing the value. The `number.spectra_run_duration` entity would track what the user wants, but the actual duration is managed by HA — the integration starts the watermaker with whatever the Spectra has stored, and HA sends a stop command after `run_duration` hours if the Spectra's own timer hasn't expired first.
+**Fallback**: If the page 12 input sequence fails (WebSocket disruption detected), skip it and press OK on page 29 with the Spectra's last-used value. Log a warning. The user can still see `sensor.spectra_remaining_time` to verify.
 
-**Recommended: Approach B** — simpler, more reliable. The integration's `number.spectra_run_duration` acts as an HA-side timer. Start the watermaker (auto-accept whatever duration the Spectra has), and if the HA timer expires first, send stop. The Spectra's internal timer acts as a safety backup.
+**Reading remaining time**: While running, poll page 5 periodically (navigate right if needed). `label5` contains the remaining time string (e.g., "1h 20m", "45m"). Parse into minutes for the sensor.
 
-**Note on extending runs**: Not possible mid-run. To "extend", the integration would need to stop → wait for flush → restart, which wastes 8 minutes. Better to set a longer duration upfront.
+**Note on extending runs**: Not possible mid-run. To "extend", stop → wait for flush (~8 min) → restart. Better to set a longer duration upfront.
 
 ### State Machine
 
@@ -653,10 +665,12 @@ After a run completes (or on boot), the system shows page 4:
 ### Power Management Integration
 
 When a power outlet switch is configured:
-- **Start**: Turn on outlet → wait for ping → wait for WebSocket → auto-dismiss prompts → send start command
-- **Stop**: Send stop command → wait for flush to complete → (optionally) turn off outlet after idle timeout
+- **Start**: Turn on outlet → wait for ping → wait for WebSocket → auto-dismiss prompts → set duration → start
+- **Stop**: Send stop command → wait for flush to complete → start 5-minute auto-off timer → turn off outlet
+- **Auto power-off**: 5 minutes after reaching idle (configurable). Timer cancels if a new start command is issued before it fires.
 - **State "off"**: Outlet is off, no WebSocket expected
 - **State "booting"**: Outlet is on, waiting for WebSocket connection
+- **External start detection**: If the watermaker enters running state without the integration commanding it (e.g., started from the physical touchscreen), the integration tracks normally but does NOT auto power-off after — since it didn't power it on, it shouldn't power it off.
 
 When no outlet is configured:
 - Assume the watermaker is always powered
@@ -686,11 +700,12 @@ When one or both tank sensors are configured:
 
 ### Prefilter Maintenance Tracking
 
-- `sensor.spectra_prefilter_last_changed` stores a datetime, persisted across restarts
-- `button.spectra_reset_prefilter` sets it to `now()` and persists
-- `sensor.spectra_prefilter_days_ago` is a derived template: `(now() - last_changed).days`
-- Storage: use `config_entry` options (survives uninstall/reinstall) or a dedicated `.storage/spectra_watermaker` JSON file
-- Suggested automation (user creates, not built-in): notify when days_ago > 90
+- `sensor.spectra_prefilter_last_changed` — datetime, persisted across restarts
+- `sensor.spectra_prefilter_days_ago` — derived: `(now() - last_changed).days`
+- `sensor.spectra_prefilter_hours_since_change` — production hours accumulated since last reset. Incremented only while state is `running`. Persisted. More useful than calendar days since filters degrade based on use, not time.
+- `button.spectra_reset_prefilter` — sets timestamp to `now()`, resets hours counter to 0
+- Storage: dedicated `.storage/spectra_watermaker` JSON file
+- One set of prefilters, all changed at once
 
 ### Run History & Logging
 
