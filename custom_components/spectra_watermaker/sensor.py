@@ -73,7 +73,7 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:water-pump",
         suggested_display_precision=1,
-        value_fn=lambda c: c.sensor_data.product_flow_lph if c.is_connected else None,
+        value_fn=lambda c: c.sensor_data.product_flow_lph if c.is_running else None,
     ),
     SpectraSensorDescription(
         key="boost_pressure",
@@ -82,7 +82,7 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         device_class=SensorDeviceClass.PRESSURE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
-        value_fn=lambda c: c.sensor_data.boost_pressure_psi if c.is_connected else None,
+        value_fn=lambda c: c.sensor_data.boost_pressure_psi if c.is_running else None,
     ),
     SpectraSensorDescription(
         key="feed_pressure",
@@ -91,7 +91,7 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         device_class=SensorDeviceClass.PRESSURE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
-        value_fn=lambda c: c.sensor_data.feed_pressure_psi if c.is_connected else None,
+        value_fn=lambda c: c.sensor_data.feed_pressure_psi if c.is_running else None,
     ),
     SpectraSensorDescription(
         key="product_tds",
@@ -100,7 +100,7 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         icon="mdi:water-opacity",
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        value_fn=lambda c: c.sensor_data.product_tds_ppm if c.is_connected else None,
+        value_fn=lambda c: c.sensor_data.product_tds_ppm if c.is_running else None,
     ),
     SpectraSensorDescription(
         key="water_temperature",
@@ -109,7 +109,7 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
-        value_fn=lambda c: c.sensor_data.water_temp_c if c.is_connected else None,
+        value_fn=lambda c: c.sensor_data.water_temp_c if c.is_running and c.sensor_data.water_temp_f > 33 else None,
     ),
     SpectraSensorDescription(
         key="water_quality",
