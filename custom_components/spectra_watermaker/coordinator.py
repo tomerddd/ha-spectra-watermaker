@@ -275,6 +275,13 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._autostore_countdown
 
     @property
+    def current_run_liters(self) -> float | None:
+        """Liters produced in the current run (None if not running)."""
+        if self._state not in (WatermakerState.RUNNING, WatermakerState.FLUSHING):
+            return None
+        return round(self._run_liters, 1)
+
+    @property
     def run_progress(self) -> float | None:
         """Run progress as a percentage (0-100).
 

@@ -207,6 +207,15 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         value_fn=lambda c: c.storage.total_liters,
     ),
     SpectraSensorDescription(
+        key="current_run_liters",
+        translation_key="current_run_liters",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.WATER,
+        suggested_display_precision=1,
+        icon="mdi:water-plus",
+        value_fn=lambda c: c.current_run_liters,
+    ),
+    SpectraSensorDescription(
         key="total_hours",
         translation_key="total_hours",
         native_unit_of_measurement=UnitOfTime.HOURS,

@@ -154,6 +154,9 @@
       },
       "prefilter_hours_since_change": {
         "name": "Prefilter hours since change"
+      },
+      "current_run_liters": {
+        "name": "Current run liters"
       }
     },
     "binary_sensor": {
