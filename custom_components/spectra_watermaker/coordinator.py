@@ -437,8 +437,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         elif self._state not in (
             WatermakerState.IDLE,
             WatermakerState.PROMPT,
+            WatermakerState.BOOTING,
         ):
-            # Need to be idle (or prompt) to start
+            # Need to be idle, prompt, or booting (recovery) to start
             if self._ui_connected and self._ui_state.is_startup_page:
                 await self._protocol.dismiss_prompts()
             elif self._state != WatermakerState.IDLE:
@@ -512,6 +513,18 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._state = WatermakerState.BOOTING
         self.async_set_updated_data({})
         await self._client.connect()
+
+        # Wait for WebSocket connection (up to 30s for boot)
+        for _ in range(15):
+            if self._ui_connected:
+                break
+            await asyncio.sleep(2.0)
+
+        if not self._ui_connected:
+            _LOGGER.warning("Timeout waiting for WebSocket after power-on — state reset to OFF")
+            self._state = WatermakerState.OFF
+            self._integration_powered_on = False
+            self.async_set_updated_data({})
 
     async def async_power_off(self) -> None:
         """Turn off power switch (only if not flushing)."""
@@ -655,7 +668,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             new_state == WatermakerState.RUNNING
             and not self._integration_started
         ):
-            _LOGGER.info("External start detected — tracking but no auto-off")
+            _LOGGER.info("External start detected — tracking run")
             self._integration_powered_on = False
 
         # Prompt auto-dismiss during boot
@@ -839,8 +852,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._storage.async_save(), name="spectra_save_flush"
         )
 
-        # Start auto power-off timer if we powered it on
-        if self._integration_powered_on and self._auto_off_minutes > 0:
+        # Start auto power-off timer
+        if self._auto_off_minutes > 0:
             self._start_auto_off_timer()
 
     def _extract_ui_data(self, ui: SpectraUIState) -> None:
