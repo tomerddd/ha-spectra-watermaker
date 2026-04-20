@@ -42,9 +42,19 @@
       "init": {
         "title": "Spectra Watermaker Options",
         "data": {
+          "power_switch": "Power outlet switch",
+          "power_sensor": "Power consumption sensor",
+          "tank_sensor_port": "Port tank level sensor",
+          "tank_sensor_stbd": "Starboard tank level sensor",
+          "tank_full_threshold": "Tank full auto-stop threshold",
           "auto_off_delay": "Auto power-off delay"
         },
         "data_description": {
+          "power_switch": "Switch entity that controls power to the watermaker (e.g., a smart outlet)",
+          "power_sensor": "Sensor that measures the watermaker outlet's power draw in watts",
+          "tank_sensor_port": "Sensor providing port tank level as a percentage",
+          "tank_sensor_stbd": "Sensor providing starboard tank level as a percentage",
+          "tank_full_threshold": "Stop the watermaker when any tank reaches this level for 30 seconds",
           "auto_off_delay": "Minutes to wait after idle before turning off the outlet. Set to 0 to disable."
         }
       }
@@ -52,58 +62,142 @@
   },
   "entity": {
     "sensor": {
-      "state": { "name": "State" },
-      "product_flow": { "name": "Product flow" },
-      "boost_pressure": { "name": "Boost pressure" },
-      "feed_pressure": { "name": "Feed pressure" },
-      "product_tds": { "name": "Product TDS" },
-      "water_temperature": { "name": "Water temperature" },
-      "water_quality": { "name": "Water quality" },
-      "water_destination": { "name": "Water destination" },
-      "filter_condition": { "name": "Filter condition" },
-      "elapsed_time": { "name": "Elapsed time" },
-      "remaining_time": { "name": "Remaining time" },
-      "feed_flow": { "name": "Feed flow" },
-      "feed_tds": { "name": "Feed TDS" },
-      "battery_voltage": { "name": "Battery voltage" },
-      "autostore_countdown": { "name": "Autostore countdown" },
-      "flush_progress": { "name": "Flush progress" },
-      "run_progress": { "name": "Run progress" },
-      "total_liters": { "name": "Total liters produced" },
-      "total_hours": { "name": "Total production hours" },
-      "last_run_duration": { "name": "Last run duration" },
-      "last_run_avg_ppm": { "name": "Last run avg PPM" },
-      "last_run_start": { "name": "Last run start" },
-      "last_run_end": { "name": "Last run end" },
-      "last_run_liters": { "name": "Last run liters" },
-      "last_run_time_to_fill": { "name": "Last run time to fill" },
-      "last_run_stop_reason": { "name": "Last run stop reason" },
-      "last_flush": { "name": "Last flush" },
-      "days_since_flush": { "name": "Days since flush" },
-      "prefilter_last_changed": { "name": "Prefilter last changed" },
-      "prefilter_days_ago": { "name": "Prefilter days ago" },
-      "prefilter_hours_since_change": { "name": "Prefilter hours since change" }
+      "state": {
+        "name": "State"
+      },
+      "product_flow": {
+        "name": "Product flow"
+      },
+      "boost_pressure": {
+        "name": "Boost pressure"
+      },
+      "feed_pressure": {
+        "name": "Feed pressure"
+      },
+      "product_tds": {
+        "name": "Product TDS"
+      },
+      "water_temperature": {
+        "name": "Water temperature"
+      },
+      "water_quality": {
+        "name": "Water quality"
+      },
+      "water_destination": {
+        "name": "Water destination"
+      },
+      "filter_condition": {
+        "name": "Filter condition"
+      },
+      "elapsed_time": {
+        "name": "Elapsed time"
+      },
+      "remaining_time": {
+        "name": "Remaining time"
+      },
+      "feed_flow": {
+        "name": "Feed flow"
+      },
+      "feed_tds": {
+        "name": "Feed TDS"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "autostore_countdown": {
+        "name": "Autostore countdown"
+      },
+      "flush_progress": {
+        "name": "Flush progress"
+      },
+      "run_progress": {
+        "name": "Run progress"
+      },
+      "total_liters": {
+        "name": "Total liters produced"
+      },
+      "total_hours": {
+        "name": "Total production hours"
+      },
+      "last_run_duration": {
+        "name": "Last run duration"
+      },
+      "last_run_avg_ppm": {
+        "name": "Last run avg PPM"
+      },
+      "last_run_start": {
+        "name": "Last run start"
+      },
+      "last_run_end": {
+        "name": "Last run end"
+      },
+      "last_run_liters": {
+        "name": "Last run liters"
+      },
+      "last_run_time_to_fill": {
+        "name": "Last run time to fill"
+      },
+      "last_run_stop_reason": {
+        "name": "Last run stop reason"
+      },
+      "last_flush": {
+        "name": "Last flush"
+      },
+      "days_since_flush": {
+        "name": "Days since flush"
+      },
+      "prefilter_last_changed": {
+        "name": "Prefilter last changed"
+      },
+      "prefilter_days_ago": {
+        "name": "Prefilter days ago"
+      },
+      "prefilter_hours_since_change": {
+        "name": "Prefilter hours since change"
+      }
     },
     "binary_sensor": {
-      "connected": { "name": "Connected" },
-      "running": { "name": "Running" },
-      "filling_tank": { "name": "Filling tank" }
+      "connected": {
+        "name": "Connected"
+      },
+      "running": {
+        "name": "Running"
+      },
+      "filling_tank": {
+        "name": "Filling tank"
+      }
     },
     "button": {
-      "start": { "name": "Start" },
-      "stop": { "name": "Stop" },
-      "flush": { "name": "Flush" },
-      "reset_prefilter": { "name": "Reset prefilter" }
+      "start": {
+        "name": "Start"
+      },
+      "stop": {
+        "name": "Stop"
+      },
+      "flush": {
+        "name": "Flush"
+      },
+      "reset_prefilter": {
+        "name": "Reset prefilter"
+      }
     },
     "switch": {
-      "power": { "name": "Power" }
+      "power": {
+        "name": "Power"
+      }
     },
     "select": {
-      "water_destination": { "name": "Water destination" }
+      "water_destination": {
+        "name": "Water destination"
+      }
     },
     "number": {
-      "run_duration": { "name": "Run duration" },
-      "tank_full_threshold": { "name": "Tank full threshold" }
+      "run_duration": {
+        "name": "Run duration"
+      },
+      "tank_full_threshold": {
+        "name": "Tank full threshold"
+      }
     }
   },
   "services": {

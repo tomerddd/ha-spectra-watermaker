@@ -170,17 +170,79 @@ class SpectraWatermakerOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            # Separate data-level fields from options-level fields
+            new_data = dict(self._config_entry.data)
+            new_data[CONF_POWER_SWITCH] = user_input.get(CONF_POWER_SWITCH)
+            new_data[CONF_POWER_SENSOR] = user_input.get(CONF_POWER_SENSOR)
+            new_data[CONF_TANK_SENSOR_PORT] = user_input.get(CONF_TANK_SENSOR_PORT)
+            new_data[CONF_TANK_SENSOR_STBD] = user_input.get(CONF_TANK_SENSOR_STBD)
+            new_data[CONF_TANK_FULL_THRESHOLD] = user_input.get(
+                CONF_TANK_FULL_THRESHOLD, DEFAULT_TANK_FULL_THRESHOLD
+            )
 
-        current = self._config_entry.options
+            self.hass.config_entries.async_update_entry(
+                self._config_entry, data=new_data
+            )
+
+            # Options-only fields
+            options = {
+                CONF_AUTO_OFF_DELAY: user_input.get(
+                    CONF_AUTO_OFF_DELAY, DEFAULT_AUTO_OFF_MINUTES
+                ),
+            }
+            return self.async_create_entry(title="", data=options)
+
+        current_data = self._config_entry.data
+        current_opts = self._config_entry.options
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Optional(
+                        CONF_POWER_SWITCH,
+                        description={"suggested_value": current_data.get(CONF_POWER_SWITCH)},
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="switch"),
+                    ),
+                    vol.Optional(
+                        CONF_POWER_SENSOR,
+                        description={"suggested_value": current_data.get(CONF_POWER_SENSOR)},
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            domain="sensor",
+                            device_class="power",
+                        ),
+                    ),
+                    vol.Optional(
+                        CONF_TANK_SENSOR_PORT,
+                        description={"suggested_value": current_data.get(CONF_TANK_SENSOR_PORT)},
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="sensor"),
+                    ),
+                    vol.Optional(
+                        CONF_TANK_SENSOR_STBD,
+                        description={"suggested_value": current_data.get(CONF_TANK_SENSOR_STBD)},
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="sensor"),
+                    ),
+                    vol.Optional(
+                        CONF_TANK_FULL_THRESHOLD,
+                        default=current_data.get(
+                            CONF_TANK_FULL_THRESHOLD, DEFAULT_TANK_FULL_THRESHOLD
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=50,
+                            max=100,
+                            step=1,
+                            unit_of_measurement="%",
+                            mode="slider",
+                        ),
+                    ),
+                    vol.Optional(
                         CONF_AUTO_OFF_DELAY,
-                        default=current.get(
+                        default=current_opts.get(
                             CONF_AUTO_OFF_DELAY, DEFAULT_AUTO_OFF_MINUTES
                         ),
                     ): selector.NumberSelector(
