@@ -110,6 +110,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Run tracking
         self._run_start_time: datetime | None = None
         self._run_liters: float = 0.0
+        self._last_saved_liters: float = 0.0
+        self._last_incremental_save: float = 0.0
         self._run_ppm_samples: list[float] = []
         self._run_pressure_samples: list[float] = []
         self._run_temp_samples: list[float] = []
@@ -698,6 +700,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._run_start_time = datetime.now(timezone.utc)
         self._run_start_monotonic = time.monotonic()
         self._run_liters = 0.0
+        self._last_saved_liters = 0.0
+        self._last_incremental_save = time.monotonic()
         self._run_ppm_samples = []
         self._run_pressure_samples = []
         self._run_temp_samples = []
@@ -779,8 +783,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._history.async_save(), name="spectra_save_history"
         )
 
-        # Update totals
-        self._storage.total_liters += self._run_liters
+        # Update totals (only the delta not yet saved incrementally)
+        unsaved_liters = self._run_liters - self._last_saved_liters
+        self._storage.total_liters += unsaved_liters
         self._storage.total_hours += duration_minutes / 60
         self._storage.prefilter_hours += duration_minutes / 60
         self.hass.async_create_task(
@@ -806,6 +811,18 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._ui_state.toggle_tank == "0" and data.product_flow_gph > 0:
             # ~1 sample/sec, so liters = flow_lph / 3600
             self._run_liters += data.product_flow_lph / 3600
+
+        # Incremental save every 60s so liters aren't lost on crash/disconnect
+        now = time.monotonic()
+        if now - self._last_incremental_save >= 60.0:
+            delta = self._run_liters - self._last_saved_liters
+            if delta > 0:
+                self._storage.total_liters += delta
+                self._last_saved_liters = self._run_liters
+                self.hass.async_create_task(
+                    self._storage.async_save(), name="spectra_incremental_save"
+                )
+            self._last_incremental_save = now
 
         # Always collect pressure and temp
         if data.feed_pressure_psi > 0:
