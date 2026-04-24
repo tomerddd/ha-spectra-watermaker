@@ -678,6 +678,12 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._stop_time_polling()
             self._on_flush_complete()
 
+        # Start auto-off timer on any transition to IDLE or PROMPT (catch-all)
+        # This handles cases where FLUSHING->IDLE was missed (e.g., HA restart)
+        if new_state in (WatermakerState.IDLE, WatermakerState.PROMPT) and self._auto_off_minutes > 0:
+            if not self._auto_off_timer:
+                self._start_auto_off_timer()
+
         # Check for external start (running without integration commanding it)
         if (
             new_state == WatermakerState.RUNNING
