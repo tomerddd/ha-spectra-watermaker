@@ -1,7 +1,7 @@
 {
   "domain": "spectra_watermaker",
   "name": "Spectra Watermaker Assistant",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "documentation": "https://github.com/tomerddd/ha-spectra-watermaker",
   "issue_tracker": "https://github.com/tomerddd/ha-spectra-watermaker/issues",
   "codeowners": ["@tomerddd"],
