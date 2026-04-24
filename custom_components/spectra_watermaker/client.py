@@ -177,6 +177,11 @@ class SpectraClient:
             name="spectra_heartbeat",
         )
 
+    async def reconnect(self) -> None:
+        """Disconnect and reconnect fresh (resets backoff)."""
+        await self.disconnect()
+        await self.connect()
+
     async def disconnect(self) -> None:
         """Close all WebSocket connections."""
         self._running = False

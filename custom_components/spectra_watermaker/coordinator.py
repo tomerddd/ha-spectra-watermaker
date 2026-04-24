@@ -419,11 +419,11 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._state = WatermakerState.BOOTING
             self.async_set_updated_data({})
 
-            # Connect WebSocket
-            await self._client.connect()
+            # Fresh WebSocket connection (resets any stale backoff)
+            await self._client.reconnect()
 
-            # Wait for WebSocket connection (up to 30s for boot)
-            for _ in range(15):
+            # Wait for WebSocket connection (up to 60s for boot)
+            for _ in range(30):
                 if self._ui_connected:
                     break
                 await asyncio.sleep(2.0)
@@ -521,10 +521,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._state = WatermakerState.BOOTING
         self.async_set_updated_data({})
-        await self._client.connect()
+        await self._client.reconnect()
 
-        # Wait for WebSocket connection (up to 30s for boot)
-        for _ in range(15):
+        # Wait for WebSocket connection (up to 60s for boot)
+        for _ in range(30):
             if self._ui_connected:
                 break
             await asyncio.sleep(2.0)
