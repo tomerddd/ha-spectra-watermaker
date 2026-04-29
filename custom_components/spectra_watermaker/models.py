@@ -235,3 +235,39 @@ class RunRecord:
             stop_reason=data.get("stop_reason", StopReason.MANUAL),
             data_incomplete=data.get("data_incomplete", False),
         )
+
+
+@dataclass
+class FlushRecord:
+    """Record of a single flush cycle — tracks filter degradation over time."""
+
+    timestamp: str = ""  # ISO format
+    duration_seconds: float = 0.0
+    avg_flow_gph: float | None = None
+    avg_pressure_psi: float | None = None
+    start_tds: float | None = None
+    end_tds: float | None = None
+    liters_used: float = 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "timestamp": self.timestamp,
+            "duration_seconds": self.duration_seconds,
+            "avg_flow_gph": self.avg_flow_gph,
+            "avg_pressure_psi": self.avg_pressure_psi,
+            "start_tds": self.start_tds,
+            "end_tds": self.end_tds,
+            "liters_used": self.liters_used,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> FlushRecord:
+        return cls(
+            timestamp=data.get("timestamp", ""),
+            duration_seconds=data.get("duration_seconds", 0.0),
+            avg_flow_gph=data.get("avg_flow_gph"),
+            avg_pressure_psi=data.get("avg_pressure_psi"),
+            start_tds=data.get("start_tds"),
+            end_tds=data.get("end_tds"),
+            liters_used=data.get("liters_used", 0.0),
+        )

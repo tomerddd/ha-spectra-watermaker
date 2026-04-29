@@ -387,6 +387,31 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         suggested_display_precision=1,
         value_fn=lambda c: c.storage.strainer_hours,
     ),
+    # ── Filter health % ──
+    SpectraSensorDescription(
+        key="prefilter_health",
+        translation_key="prefilter_health",
+        native_unit_of_measurement="%",
+        icon="mdi:filter-check",
+        suggested_display_precision=0,
+        value_fn=lambda c: c.prefilter_health_pct,
+    ),
+    SpectraSensorDescription(
+        key="charcoal_health",
+        translation_key="charcoal_health",
+        native_unit_of_measurement="%",
+        icon="mdi:filter-check",
+        suggested_display_precision=0,
+        value_fn=lambda c: c.charcoal_health_pct,
+    ),
+    SpectraSensorDescription(
+        key="strainer_health",
+        translation_key="strainer_health",
+        native_unit_of_measurement="%",
+        icon="mdi:filter-check",
+        suggested_display_precision=0,
+        value_fn=lambda c: c.strainer_health_pct,
+    ),
 )
 
 

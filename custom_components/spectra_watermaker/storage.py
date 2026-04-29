@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import DEFAULT_HISTORY_LIMIT, DOMAIN
-from .models import RunRecord
+from .models import FlushRecord, RunRecord
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -158,6 +158,41 @@ class SpectraStorage:
         self.strainer_last_changed = datetime.now(timezone.utc).isoformat()
         self.strainer_hours = 0.0
 
+    # ── Filter health baselines ──
+    # Captured on reset, used to compute health %
+
+    @property
+    def prefilter_baseline_feed_pressure(self) -> float | None:
+        return self._data.get("prefilter_baseline_feed_pressure")
+
+    @prefilter_baseline_feed_pressure.setter
+    def prefilter_baseline_feed_pressure(self, value: float | None) -> None:
+        self._data["prefilter_baseline_feed_pressure"] = value
+
+    @property
+    def charcoal_baseline_flush_flow(self) -> float | None:
+        return self._data.get("charcoal_baseline_flush_flow")
+
+    @charcoal_baseline_flush_flow.setter
+    def charcoal_baseline_flush_flow(self, value: float | None) -> None:
+        self._data["charcoal_baseline_flush_flow"] = value
+
+    @property
+    def charcoal_baseline_flush_tds(self) -> float | None:
+        return self._data.get("charcoal_baseline_flush_tds")
+
+    @charcoal_baseline_flush_tds.setter
+    def charcoal_baseline_flush_tds(self, value: float | None) -> None:
+        self._data["charcoal_baseline_flush_tds"] = value
+
+    @property
+    def strainer_baseline_boost_pressure(self) -> float | None:
+        return self._data.get("strainer_baseline_boost_pressure")
+
+    @strainer_baseline_boost_pressure.setter
+    def strainer_baseline_boost_pressure(self, value: float | None) -> None:
+        self._data["strainer_baseline_boost_pressure"] = value
+
 
 class SpectraHistoryStorage:
     """Manages run history for the Spectra Watermaker integration."""
@@ -173,19 +208,23 @@ class SpectraHistoryStorage:
         )
         self._max_records = max_records
         self._runs: list[RunRecord] = []
+        self._flushes: list[FlushRecord] = []
 
     async def async_load(self) -> None:
-        """Load run history from storage."""
+        """Load run and flush history from storage."""
         stored = await self._store.async_load()
         if stored and "runs" in stored:
             self._runs = [RunRecord.from_dict(r) for r in stored["runs"]]
-        _LOGGER.debug("Loaded %d run history records", len(self._runs))
+        if stored and "flushes" in stored:
+            self._flushes = [FlushRecord.from_dict(f) for f in stored["flushes"]]
+        _LOGGER.debug("Loaded %d run, %d flush history records", len(self._runs), len(self._flushes))
 
     async def async_save(self) -> None:
-        """Save run history to storage."""
-        await self._store.async_save(
-            {"runs": [r.to_dict() for r in self._runs]}
-        )
+        """Save run and flush history to storage."""
+        await self._store.async_save({
+            "runs": [r.to_dict() for r in self._runs],
+            "flushes": [f.to_dict() for f in self._flushes],
+        })
 
     @property
     def runs(self) -> list[RunRecord]:
@@ -205,3 +244,19 @@ class SpectraHistoryStorage:
     def get_history(self, limit: int = 10) -> list[dict]:
         """Get last N runs as dicts for service responses."""
         return [r.to_dict() for r in self._runs[:limit]]
+
+    # Flush history
+    @property
+    def flushes(self) -> list[FlushRecord]:
+        """All stored flush records, newest first."""
+        return self._flushes
+
+    @property
+    def last_flush_record(self) -> FlushRecord | None:
+        """Most recent flush record."""
+        return self._flushes[0] if self._flushes else None
+
+    def add_flush(self, record: FlushRecord) -> None:
+        """Add a flush record. Trims to max_records."""
+        self._flushes.insert(0, record)
+        self._flushes = self._flushes[: self._max_records]

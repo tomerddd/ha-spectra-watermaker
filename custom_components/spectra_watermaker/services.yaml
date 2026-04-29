@@ -8,7 +8,7 @@ start:
       required: false
       selector:
         number:
-          min: 1.0
+          min: 0.5
           max: 5.0
           step: 0.25
           unit_of_measurement: "h"

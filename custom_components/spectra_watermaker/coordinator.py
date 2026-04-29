@@ -38,6 +38,7 @@ from .const import (
     get_model_profile,
 )
 from .models import (
+    FlushRecord,
     RunRecord,
     SpectraData,
     SpectraUIState,
@@ -145,7 +146,6 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Event / anomaly monitoring
         self._model_profile: dict | None = None
         self._fired_anomalies: set[str] = set()
-        self._salinity_retry_count: int = 0
         self._requested_duration: float = DEFAULT_RUN_DURATION_HOURS
         self._tank_port_start: float | None = None
         self._tank_stbd_start: float | None = None
@@ -153,6 +153,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._flush_pressure_samples: list[float] = []
         self._flush_flow_samples: list[float] = []
         self._flush_liters: float = 0.0
+        self._flush_start_time: float = 0.0
         self._flush_start_tank_port: float | None = None
         self._flush_start_tank_stbd: float | None = None
 
@@ -531,20 +532,27 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return await self._protocol.toggle_destination()
 
     async def async_reset_prefilter(self) -> None:
-        """Reset prefilter tracking to now."""
+        """Reset prefilter tracking and capture baseline feed pressure."""
         self._storage.reset_prefilter()
+        if self._data.feed_pressure_psi > 0 and self._state == WatermakerState.RUNNING:
+            self._storage.prefilter_baseline_feed_pressure = round(self._data.feed_pressure_psi, 1)
+            _LOGGER.info("Prefilter baseline captured: feed_p=%.1f PSI", self._data.feed_pressure_psi)
         await self._storage.async_save()
         self.async_set_updated_data({})
 
     async def async_reset_charcoal(self) -> None:
-        """Reset charcoal filter tracking to now."""
+        """Reset charcoal filter tracking and capture baseline flush values."""
         self._storage.reset_charcoal()
+        # Baselines captured at next flush completion via _on_flush_complete
         await self._storage.async_save()
         self.async_set_updated_data({})
 
     async def async_reset_strainer(self) -> None:
-        """Reset raw water strainer tracking to now."""
+        """Reset raw water strainer tracking and capture baseline boost pressure."""
         self._storage.reset_strainer()
+        if self._data.boost_pressure_psi > 0 and self._state == WatermakerState.RUNNING:
+            self._storage.strainer_baseline_boost_pressure = round(self._data.boost_pressure_psi, 1)
+            _LOGGER.info("Strainer baseline captured: boost_p=%.1f PSI", self._data.boost_pressure_psi)
         await self._storage.async_save()
         self.async_set_updated_data({})
 
@@ -672,6 +680,63 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.async_set_updated_data({})
 
     # ──────────────────────────────────────────────
+    # Filter health estimation
+    # ──────────────────────────────────────────────
+
+    @property
+    def prefilter_health_pct(self) -> float | None:
+        """Estimate prefilter health based on feed pressure rise.
+
+        New filter = 100%, at pressure_limit = 0%.
+        """
+        baseline = self._storage.prefilter_baseline_feed_pressure
+        if baseline is None or self._state != WatermakerState.RUNNING:
+            return None
+        current = self._data.feed_pressure_psi
+        if current <= 0:
+            return None
+        profile = self._ensure_model_profile()
+        limit = profile["pressure_limit"]
+        if limit <= baseline:
+            return None
+        health = max(0.0, min(100.0, (limit - current) / (limit - baseline) * 100))
+        return round(health, 0)
+
+    @property
+    def charcoal_health_pct(self) -> float | None:
+        """Estimate charcoal filter health based on flush flow drop.
+
+        New filter = 100%, no flow = 0%.
+        """
+        baseline = self._storage.charcoal_baseline_flush_flow
+        if baseline is None or baseline <= 0:
+            return None
+        if self._state != WatermakerState.FLUSHING or not self._flush_flow_samples:
+            # Use last known value — show latest from last flush
+            return None
+        avg_flow = sum(self._flush_flow_samples[-10:]) / len(self._flush_flow_samples[-10:])
+        health = max(0.0, min(100.0, avg_flow / baseline * 100))
+        return round(health, 0)
+
+    @property
+    def strainer_health_pct(self) -> float | None:
+        """Estimate strainer health based on boost pressure drop.
+
+        New strainer = 100%, at alarm threshold (10 PSI) = 0%.
+        """
+        baseline = self._storage.strainer_baseline_boost_pressure
+        if baseline is None or self._state != WatermakerState.RUNNING:
+            return None
+        current = self._data.boost_pressure_psi
+        if current <= 0:
+            return None
+        alarm = 10.0  # Spectra alarm threshold
+        if baseline <= alarm:
+            return None
+        health = max(0.0, min(100.0, (current - alarm) / (baseline - alarm) * 100))
+        return round(health, 0)
+
+    # ──────────────────────────────────────────────
     # Events and anomaly detection
     # ──────────────────────────────────────────────
 
@@ -794,15 +859,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._client.send_command(page, "BUTTON0")
             _LOGGER.info("Auto-dismissed mid-run prompt on page %s", page)
 
-    async def _handle_salinity_retry(self) -> None:
-        """Handle salinity error with optional retry."""
-        try:
-            await self._execute_salinity_retry()
-        except Exception:  # noqa: BLE001
-            _LOGGER.exception("Salinity retry failed")
-
-    async def _execute_salinity_retry(self) -> None:
-        """Internal salinity retry implementation."""
+    def _handle_run_error(self) -> None:
+        """Handle a fatal error that stopped the run."""
         ui = self._ui_state
         label0 = getattr(ui, "label0", "") or ""
         label1 = getattr(ui, "label1", "") or ""
@@ -812,56 +870,15 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._run_start_time:
             duration_minutes = (datetime.now(timezone.utc) - self._run_start_time).total_seconds() / 60
 
-        # End run tracking (the run failed)
         self._end_run_tracking()
-
-        will_retry = self._salinity_retry_count < 1
 
         self._fire_event(
             "run_error",
             duration_minutes=round(duration_minutes, 1),
             error_page=ui.page,
             error_message=error_msg,
-            will_retry=will_retry,
+            will_retry=False,
         )
-
-        if not will_retry:
-            _LOGGER.warning("Salinity error — max retries reached, giving up")
-            return
-
-        _LOGGER.info("Salinity error — attempting retry (%d/1)", self._salinity_retry_count + 1)
-        self._salinity_retry_count += 1
-
-        # Cancel auto-off timer that may have started from IDLE/PROMPT transition
-        self._cancel_auto_off_timer()
-
-        # Dismiss the warning
-        await asyncio.sleep(1.0)
-        if self._ui_connected:
-            await self._client.send_command(ui.page, "BUTTON0")
-
-        # Wait for flushing state (Spectra auto-flushes after salinity error)
-        for _ in range(15):
-            if self._state == WatermakerState.FLUSHING:
-                break
-            await asyncio.sleep(2.0)
-
-        # Stop the flush
-        if self._state == WatermakerState.FLUSHING:
-            await self._protocol.stop()
-
-        # Wait for idle
-        for _ in range(15):
-            if self._state in (WatermakerState.IDLE, WatermakerState.PROMPT):
-                break
-            await asyncio.sleep(2.0)
-
-        # Retry start with same duration
-        if self._state in (WatermakerState.IDLE, WatermakerState.PROMPT):
-            _LOGGER.info("Retrying watermaker start with %.1f hours", self._requested_duration)
-            await self.async_start_watermaker(self._requested_duration)
-        else:
-            _LOGGER.warning("Salinity retry — unexpected state %s, aborting", self._state)
 
     # ──────────────────────────────────────────────
     # State machine
@@ -897,6 +914,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._flush_pressure_samples = []
             self._flush_flow_samples = []
             self._flush_liters = 0.0
+            self._flush_start_time = time.monotonic()
             self._flush_start_tank_port = self._get_tank_level(self._tank_port)
             self._flush_start_tank_stbd = self._get_tank_level(self._tank_stbd)
             self._fired_anomalies = set()
@@ -941,16 +959,13 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 name="spectra_dismiss_prompts",
             )
 
-        # Detect salinity error or device reboot while running
+        # Detect error or device reboot while running
         if old_state == WatermakerState.RUNNING and new_state == WatermakerState.PROMPT:
             page = self._ui_state.page
             label = (getattr(self._ui_state, "label1", "") or "").lower()
-            if page == "43" or "salinity" in label:
+            if page in ("43", "14") or "salinity" in label or "warning" in (getattr(self._ui_state, "label0", "") or "").lower():
                 self._stop_reason = StopReason.ERROR
-                self.hass.async_create_task(
-                    self._handle_salinity_retry(),
-                    name="spectra_salinity_retry",
-                )
+                self._handle_run_error()
             else:
                 self._stop_reason = StopReason.DEVICE_REBOOT
 
@@ -1097,11 +1112,6 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Track per-second production data during a run."""
         elapsed = time.monotonic() - self._run_start_monotonic
 
-        # Reset salinity retry counter after 5 min of successful running
-        if elapsed > 300 and self._salinity_retry_count > 0:
-            _LOGGER.info("Run stable for 5+ min — resetting salinity retry counter")
-            self._salinity_retry_count = 0
-
         # Accumulate liters: only while toggle_tank == 0 (filling tank)
         if self._ui_state.toggle_tank == "0" and data.product_flow_gph > 0:
             # ~1 sample/sec, so liters = flow_lph / 3600
@@ -1187,6 +1197,41 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             flush_liters=round(getattr(self, "_flush_liters", 0.0), 1),
             tank_port_start_pct=getattr(self, "_flush_start_tank_port", None),
             tank_stbd_start_pct=getattr(self, "_flush_start_tank_stbd", None),
+        )
+
+        # Capture charcoal baseline on first flush after reset (no baseline yet)
+        if self._storage.charcoal_baseline_flush_flow is None and self._flush_flow_samples:
+            avg_flow = sum(self._flush_flow_samples) / len(self._flush_flow_samples)
+            self._storage.charcoal_baseline_flush_flow = round(avg_flow, 1)
+            _LOGGER.info("Charcoal baseline captured: flush_flow=%.1f GPH", avg_flow)
+        if self._storage.charcoal_baseline_flush_tds is None and self._flush_tds_samples:
+            end_tds = sum(self._flush_tds_samples[-10:]) / len(self._flush_tds_samples[-10:])
+            self._storage.charcoal_baseline_flush_tds = round(end_tds, 1)
+            _LOGGER.info("Charcoal baseline captured: end_tds=%.1f PPM", end_tds)
+
+        # Save flush record to history
+        flush_duration = time.monotonic() - self._flush_start_time if self._flush_start_time else 0.0
+        flush_record = FlushRecord(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            duration_seconds=round(flush_duration, 0),
+            avg_flow_gph=(
+                round(sum(self._flush_flow_samples) / len(self._flush_flow_samples), 1)
+                if self._flush_flow_samples else None
+            ),
+            avg_pressure_psi=(
+                round(sum(self._flush_pressure_samples) / len(self._flush_pressure_samples), 1)
+                if self._flush_pressure_samples else None
+            ),
+            start_tds=round(self._flush_tds_samples[0], 0) if self._flush_tds_samples else None,
+            end_tds=(
+                round(sum(self._flush_tds_samples[-10:]) / len(self._flush_tds_samples[-10:]), 0)
+                if self._flush_tds_samples else None
+            ),
+            liters_used=round(self._flush_liters, 1),
+        )
+        self._history.add_flush(flush_record)
+        self.hass.async_create_task(
+            self._history.async_save(), name="spectra_save_flush_history"
         )
 
         # Log flush summary

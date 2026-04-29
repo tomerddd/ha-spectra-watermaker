@@ -22,7 +22,7 @@ SERVICE_GET_RUN_HISTORY = "get_run_history"
 SERVICE_START_SCHEMA = vol.Schema(
     {
         vol.Optional("duration_hours"): vol.All(
-            vol.Coerce(float), vol.Range(min=1.0, max=5.0)
+            vol.Coerce(float), vol.Range(min=0.5, max=5.0)
         ),
     }
 )
