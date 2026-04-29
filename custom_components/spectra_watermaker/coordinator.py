@@ -1079,7 +1079,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "run_completed",
                 duration_minutes=round(duration_minutes, 1),
                 liters_produced=round(self._run_liters, 1),
-                stop_reason=self._stop_reason,
+                stop_reason=str(self._stop_reason),
                 tank_port_start_pct=self._tank_port_start,
                 tank_stbd_start_pct=self._tank_stbd_start,
             )
@@ -1173,6 +1173,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass.async_create_task(
             self._storage.async_save(), name="spectra_save_flush"
         )
+
+        self._fire_event("flush_complete")
 
         # Log flush summary
         if self._flush_pressure_samples:
