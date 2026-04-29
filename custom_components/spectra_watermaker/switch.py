@@ -36,7 +36,7 @@ class SpectraPowerSwitch(SwitchEntity):
     @property
     def is_on(self) -> bool:
         """Return true if the switch is on."""
-        return self._coordinator.state not in (WatermakerState.OFF, WatermakerState.ERROR)
+        return self._coordinator.state not in (WatermakerState.OFF, WatermakerState.ERROR, WatermakerState.BOOTING)
 
     @property
     def available(self) -> bool:

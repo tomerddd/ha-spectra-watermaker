@@ -105,6 +105,7 @@ class SpectraButton(ButtonEntity):
                 WatermakerState.IDLE,
                 WatermakerState.PROMPT,
                 WatermakerState.ERROR,
+                WatermakerState.BOOTING,
             )
         if key == "stop":
             return state in (WatermakerState.RUNNING, WatermakerState.FLUSHING)
