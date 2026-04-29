@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .client import SpectraClient
 from .const import (
+    ANOMALY_STARTUP_SKIP_SEC,
     CONF_AUTO_OFF_DELAY,
     CONF_HOST,
     CONF_POWER_SENSOR,
@@ -30,7 +31,11 @@ from .const import (
     DEFAULT_WS_DATA_PORT,
     DEFAULT_WS_UI_PORT,
     DOMAIN,
+    EVENT_SPECTRA_WATERMAKER,
+    FLUSH_END_TDS_CHECK,
+    PAGES_PROMPT,
     PPM_IGNORE_STARTUP_SEC,
+    get_model_profile,
 )
 from .models import (
     RunRecord,
@@ -136,6 +141,17 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Tank full debounce
         self._tank_full_timer: asyncio.TimerHandle | None = None
         self._tank_unsub: list[CALLBACK_TYPE] = []
+
+        # Event / anomaly monitoring
+        self._model_profile: dict | None = None
+        self._fired_anomalies: set[str] = set()
+        self._salinity_retry_count: int = 0
+        self._requested_duration: float = DEFAULT_RUN_DURATION_HOURS
+        self._tank_port_start: float | None = None
+        self._tank_stbd_start: float | None = None
+        self._flush_tds_samples: list[float] = []
+        self._flush_pressure_samples: list[float] = []
+        self._flush_flow_samples: list[float] = []
 
         # Periodic time polling task
         self._time_poll_task: asyncio.Task[None] | None = None
@@ -412,6 +428,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._state = WatermakerState.OFF
 
         duration = duration_hours if duration_hours is not None else self._run_duration
+        self._requested_duration = duration
         self._cancel_auto_off_timer()
         self._integration_started = True
 
@@ -575,6 +592,12 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Run tracking: accumulate liters and PPM
         if self._state == WatermakerState.RUNNING and self._run_start_time:
             self._track_run_data(data)
+            self._check_anomalies(data, "running")
+
+        # Flush tracking
+        if self._state == WatermakerState.FLUSHING:
+            self._track_flush_data(data)
+            self._check_anomalies(data, "flushing")
 
         self.async_set_updated_data({})
 
@@ -591,6 +614,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Track toggle_tank transitions
         if old_ui.toggle_tank != ui_state.toggle_tank:
             self._handle_toggle_change(old_ui.toggle_tank, ui_state.toggle_tank)
+
+        # Detect mid-run prompts
+        if self._state == WatermakerState.RUNNING and ui_state.page in PAGES_PROMPT:
+            self._handle_mid_run_prompt(ui_state)
 
         # Update state from UI
         new_state = self._protocol.detect_state(self._data)
@@ -630,6 +657,183 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.async_set_updated_data({})
 
     # ──────────────────────────────────────────────
+    # Events and anomaly detection
+    # ──────────────────────────────────────────────
+
+    def _get_tank_level(self, entity_id: str | None) -> float | None:
+        """Get current tank level from HA state."""
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state and state.state not in ("unknown", "unavailable"):
+            try:
+                return round(float(state.state), 1)
+            except (ValueError, TypeError):
+                pass
+        return None
+
+    def _fire_event(self, event_type: str, **data: Any) -> None:
+        """Fire a spectra_watermaker_event with tank levels included."""
+        data["type"] = event_type
+        data["tank_port_pct"] = self._get_tank_level(self._tank_port)
+        data["tank_stbd_pct"] = self._get_tank_level(self._tank_stbd)
+        _LOGGER.info("Firing event: %s %s", event_type, {k: v for k, v in data.items() if k != "type"})
+        self.hass.bus.async_fire(EVENT_SPECTRA_WATERMAKER, data)
+
+    def _ensure_model_profile(self) -> dict:
+        """Ensure model profile is loaded from device name."""
+        if self._model_profile is None:
+            self._model_profile = get_model_profile(self._data.device)
+            _LOGGER.info(
+                "Model profile loaded for '%s': pressure_limit=%s, production_gph=%s",
+                self._data.device,
+                self._model_profile["pressure_limit"],
+                self._model_profile["production_gph"],
+            )
+        return self._model_profile
+
+    def _check_anomalies(self, data: SpectraData, phase: str) -> None:
+        """Check sensor values against model-specific thresholds."""
+        if phase == "running":
+            elapsed = time.monotonic() - self._run_start_monotonic
+            if elapsed < ANOMALY_STARTUP_SKIP_SEC:
+                return
+
+        profile = self._ensure_model_profile()
+        checks = profile.get(f"{phase}_checks", []) if phase == "flushing" else profile.get("running_checks", [])
+
+        for check in checks:
+            value = getattr(data, check["field"], None)
+            if value is None or value == 0:
+                continue
+            key = f"{phase}_{check['metric']}"
+            if key in self._fired_anomalies:
+                continue
+
+            min_val = check.get("min")
+            max_val = check.get("max")
+            is_low = min_val is not None and value < min_val
+            is_high = max_val is not None and value > max_val
+
+            if is_low or is_high:
+                self._fired_anomalies.add(key)
+                causes = check.get("causes_low", []) if is_low else check.get("causes_high", [])
+                self._fire_event(
+                    "anomaly",
+                    metric=check["metric"],
+                    value=round(value, 1),
+                    expected_min=min_val,
+                    expected_max=max_val,
+                    possible_causes=causes,
+                    phase=phase,
+                )
+
+    def _check_flush_end_tds(self) -> None:
+        """Check end-of-flush TDS against threshold."""
+        if not self._flush_tds_samples:
+            return
+        # Use average of last 10 samples as end-of-flush TDS
+        recent = self._flush_tds_samples[-10:]
+        avg_tds = sum(recent) / len(recent)
+        check = FLUSH_END_TDS_CHECK
+        if check["max"] is not None and avg_tds > check["max"]:
+            self._fire_event(
+                "anomaly",
+                metric=check["metric"],
+                value=round(avg_tds, 1),
+                expected_min=None,
+                expected_max=check["max"],
+                possible_causes=check["causes_high"],
+                phase="flushing",
+            )
+
+    def _handle_mid_run_prompt(self, ui_state: SpectraUIState) -> None:
+        """Handle prompt pages that appear during a run."""
+        page = ui_state.page
+        label0 = getattr(ui_state, "label0", "") or ""
+        label1 = getattr(ui_state, "label1", "") or ""
+        message = label0
+        if label1:
+            message = f"{label0}: {label1}".replace("<br/>", " ").strip()
+
+        _LOGGER.warning("Mid-run prompt on page %s: %s", page, message)
+
+        # Page 43 with salinity is fatal — handled in state transition
+        if page == "43" and "salinity" in message.lower():
+            return
+
+        # Non-fatal: fire warning event and auto-dismiss
+        self._fire_event("warning", page=page, message=message, state=str(self._state))
+
+        # Auto-dismiss
+        self.hass.async_create_task(
+            self._dismiss_mid_run_prompt(page),
+            name="spectra_dismiss_mid_run",
+        )
+
+    async def _dismiss_mid_run_prompt(self, page: str) -> None:
+        """Dismiss a non-fatal prompt during a run."""
+        await asyncio.sleep(1.0)
+        if self._ui_connected:
+            # Try OK/BUTTON0 first
+            await self._client.send_command(page, "BUTTON0")
+            _LOGGER.info("Auto-dismissed mid-run prompt on page %s", page)
+
+    async def _handle_salinity_retry(self) -> None:
+        """Handle salinity error with optional retry."""
+        ui = self._ui_state
+        label0 = getattr(ui, "label0", "") or ""
+        label1 = getattr(ui, "label1", "") or ""
+        error_msg = f"{label0}: {label1}".replace("<br/>", " ").strip()
+
+        duration_minutes = 0.0
+        if self._run_start_time:
+            duration_minutes = (datetime.now(timezone.utc) - self._run_start_time).total_seconds() / 60
+
+        will_retry = self._salinity_retry_count < 1
+
+        self._fire_event(
+            "run_error",
+            duration_minutes=round(duration_minutes, 1),
+            error_page=ui.page,
+            error_message=error_msg,
+            will_retry=will_retry,
+        )
+
+        if not will_retry:
+            _LOGGER.warning("Salinity error — max retries reached, giving up")
+            return
+
+        _LOGGER.info("Salinity error — attempting retry (%d/1)", self._salinity_retry_count + 1)
+        self._salinity_retry_count += 1
+
+        # Dismiss the warning
+        await asyncio.sleep(1.0)
+        if self._ui_connected:
+            await self._client.send_command(ui.page, "BUTTON0")
+
+        # Wait for flushing state (Spectra auto-flushes after salinity error)
+        for _ in range(15):
+            if self._state == WatermakerState.FLUSHING:
+                break
+            await asyncio.sleep(2.0)
+
+        # Stop the flush
+        if self._state == WatermakerState.FLUSHING:
+            await self._protocol.stop()
+
+        # Wait for idle
+        for _ in range(15):
+            if self._state == WatermakerState.IDLE:
+                break
+            await asyncio.sleep(2.0)
+
+        # Retry start with same duration
+        if self._state in (WatermakerState.IDLE, WatermakerState.PROMPT):
+            _LOGGER.info("Retrying watermaker start with %.1f hours", self._requested_duration)
+            await self.async_start_watermaker(self._requested_duration)
+
+    # ──────────────────────────────────────────────
     # State machine
     # ──────────────────────────────────────────────
 
@@ -659,6 +863,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # RUNNING -> FLUSHING (normal stop)
         if old_state == WatermakerState.RUNNING and new_state == WatermakerState.FLUSHING:
             self._end_run_tracking()
+            self._flush_tds_samples = []
+            self._flush_pressure_samples = []
+            self._flush_flow_samples = []
+            self._fired_anomalies = set()
 
         # RUNNING -> IDLE (abnormal: flush skipped/interrupted)
         if old_state == WatermakerState.RUNNING and new_state == WatermakerState.IDLE:
@@ -699,10 +907,23 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 name="spectra_dismiss_prompts",
             )
 
-        # Detect device reboot while was running
+        # Detect salinity error or device reboot while running
+        if old_state == WatermakerState.RUNNING and new_state == WatermakerState.PROMPT:
+            page = self._ui_state.page
+            label = (getattr(self._ui_state, "label1", "") or "").lower()
+            if page == "43" or "salinity" in label:
+                self._stop_reason = StopReason.ERROR
+                self.hass.async_create_task(
+                    self._handle_salinity_retry(),
+                    name="spectra_salinity_retry",
+                )
+            else:
+                self._stop_reason = StopReason.DEVICE_REBOOT
+
+        # Detect device reboot (to booting, not prompt)
         if (
             old_state == WatermakerState.RUNNING
-            and new_state in (WatermakerState.BOOTING, WatermakerState.PROMPT)
+            and new_state == WatermakerState.BOOTING
         ):
             self._stop_reason = StopReason.DEVICE_REBOOT
 
@@ -726,6 +947,16 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._stop_reason = StopReason.MANUAL
         self._data_incomplete = False
         self._cancel_auto_off_timer()
+        self._fired_anomalies = set()
+        self._tank_port_start = self._get_tank_level(self._tank_port)
+        self._tank_stbd_start = self._get_tank_level(self._tank_stbd)
+
+        self._fire_event(
+            "run_started",
+            duration_hours=self._requested_duration,
+            tank_port_start_pct=self._tank_port_start,
+            tank_stbd_start_pct=self._tank_stbd_start,
+        )
 
         # If toggle_tank is already "0" at run start (filling tank from the beginning),
         # mark filling as started immediately and schedule PPM collection to begin
@@ -812,12 +1043,28 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._stop_reason,
         )
 
+        # Fire run_completed event (only for non-error stops)
+        if self._stop_reason != StopReason.ERROR:
+            self._fire_event(
+                "run_completed",
+                duration_minutes=round(duration_minutes, 1),
+                liters_produced=round(self._run_liters, 1),
+                stop_reason=self._stop_reason,
+                tank_port_start_pct=self._tank_port_start,
+                tank_stbd_start_pct=self._tank_stbd_start,
+            )
+
         self._run_start_time = None
         self._integration_started = False
 
     def _track_run_data(self, data: SpectraData) -> None:
         """Track per-second production data during a run."""
         elapsed = time.monotonic() - self._run_start_monotonic
+
+        # Reset salinity retry counter after 5 min of successful running
+        if elapsed > 300 and self._salinity_retry_count > 0:
+            _LOGGER.info("Run stable for 5+ min — resetting salinity retry counter")
+            self._salinity_retry_count = 0
 
         # Accumulate liters: only while toggle_tank == 0 (filling tank)
         if self._ui_state.toggle_tank == "0" and data.product_flow_gph > 0:
@@ -880,6 +1127,15 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Water diverted overboard — pause PPM collection
             self._ppm_collection_enabled = False
 
+    def _track_flush_data(self, data: SpectraData) -> None:
+        """Collect sensor data during flush cycle."""
+        if data.product_tds_ppm > 0:
+            self._flush_tds_samples.append(data.product_tds_ppm)
+        if data.feed_pressure_psi > 0:
+            self._flush_pressure_samples.append(data.feed_pressure_psi)
+        if data.product_flow_gph > 0:
+            self._flush_flow_samples.append(data.product_flow_gph)
+
     def _on_flush_complete(self) -> None:
         """Handle flush completion."""
         _LOGGER.info("Flush complete")
@@ -887,6 +1143,27 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass.async_create_task(
             self._storage.async_save(), name="spectra_save_flush"
         )
+
+        # Log flush summary
+        if self._flush_pressure_samples:
+            avg_p = sum(self._flush_pressure_samples) / len(self._flush_pressure_samples)
+            _LOGGER.info("Flush summary: avg pressure=%.1f PSI, samples=%d", avg_p, len(self._flush_pressure_samples))
+        if self._flush_tds_samples:
+            _LOGGER.info(
+                "Flush TDS: start=%.0f, end=%.0f, samples=%d",
+                self._flush_tds_samples[0],
+                self._flush_tds_samples[-1],
+                len(self._flush_tds_samples),
+            )
+
+        # Check end-of-flush TDS
+        self._check_flush_end_tds()
+
+        # Reset flush tracking
+        self._flush_tds_samples = []
+        self._flush_pressure_samples = []
+        self._flush_flow_samples = []
+        self._fired_anomalies = set()
 
         # Start auto power-off timer
         if self._auto_off_minutes > 0:
@@ -1029,10 +1306,11 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _auto_off_fire(self) -> None:
         """Fire auto power-off."""
         self._auto_off_timer = None
-        if self._state not in (WatermakerState.IDLE, WatermakerState.OFF):
+        if self._state not in (WatermakerState.IDLE, WatermakerState.OFF, WatermakerState.PROMPT):
             _LOGGER.debug("Auto power-off skipped — state is %s", self._state)
             return
         _LOGGER.info("Auto power-off firing")
+        self._fire_event("power_off", reason="auto_timer")
         self.hass.async_create_task(
             self.async_power_off(), name="spectra_auto_off"
         )
