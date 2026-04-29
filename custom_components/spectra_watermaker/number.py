@@ -23,9 +23,9 @@ class SpectraRunDuration(NumberEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "run_duration"
     _attr_icon = "mdi:timer-cog-outline"
-    _attr_native_min_value = 0.5
-    _attr_native_max_value = 8.0
-    _attr_native_step = 0.5
+    _attr_native_min_value = 1.0
+    _attr_native_max_value = 5.0
+    _attr_native_step = 0.25
     _attr_native_unit_of_measurement = "h"
     _attr_mode = NumberMode.SLIDER
 
