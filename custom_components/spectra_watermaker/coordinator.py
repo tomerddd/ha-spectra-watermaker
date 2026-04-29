@@ -716,7 +716,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         for check in checks:
             value = getattr(data, check["field"], None)
-            if value is None or value == 0:
+            if value is None:
                 continue
             key = f"{phase}_{check['metric']}"
             if key in self._fired_anomalies:
@@ -793,6 +793,13 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _handle_salinity_retry(self) -> None:
         """Handle salinity error with optional retry."""
+        try:
+            await self._execute_salinity_retry()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Salinity retry failed")
+
+    async def _execute_salinity_retry(self) -> None:
+        """Internal salinity retry implementation."""
         ui = self._ui_state
         label0 = getattr(ui, "label0", "") or ""
         label1 = getattr(ui, "label1", "") or ""
@@ -801,6 +808,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         duration_minutes = 0.0
         if self._run_start_time:
             duration_minutes = (datetime.now(timezone.utc) - self._run_start_time).total_seconds() / 60
+
+        # End run tracking (the run failed)
+        self._end_run_tracking()
 
         will_retry = self._salinity_retry_count < 1
 
@@ -819,6 +829,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.info("Salinity error — attempting retry (%d/1)", self._salinity_retry_count + 1)
         self._salinity_retry_count += 1
 
+        # Cancel auto-off timer that may have started from IDLE/PROMPT transition
+        self._cancel_auto_off_timer()
+
         # Dismiss the warning
         await asyncio.sleep(1.0)
         if self._ui_connected:
@@ -836,7 +849,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Wait for idle
         for _ in range(15):
-            if self._state == WatermakerState.IDLE:
+            if self._state in (WatermakerState.IDLE, WatermakerState.PROMPT):
                 break
             await asyncio.sleep(2.0)
 
@@ -844,6 +857,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._state in (WatermakerState.IDLE, WatermakerState.PROMPT):
             _LOGGER.info("Retrying watermaker start with %.1f hours", self._requested_duration)
             await self.async_start_watermaker(self._requested_duration)
+        else:
+            _LOGGER.warning("Salinity retry — unexpected state %s, aborting", self._state)
 
     # ──────────────────────────────────────────────
     # State machine
@@ -884,11 +899,12 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if old_state == WatermakerState.RUNNING and new_state == WatermakerState.IDLE:
             self._end_run_tracking()
 
-        # RUNNING -> anything unexpected
+        # RUNNING -> anything unexpected (excluding PROMPT which is handled below)
         if old_state == WatermakerState.RUNNING and new_state not in (
             WatermakerState.FLUSHING,
             WatermakerState.IDLE,
             WatermakerState.RUNNING,
+            WatermakerState.PROMPT,
         ):
             self._stop_reason = StopReason.ERROR
             self._end_run_tracking()
