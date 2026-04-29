@@ -49,6 +49,20 @@ BUTTON_DESCRIPTIONS: tuple[SpectraButtonDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         press_fn=lambda c: c.async_reset_prefilter(),
     ),
+    SpectraButtonDescription(
+        key="reset_charcoal",
+        translation_key="reset_charcoal",
+        icon="mdi:filter-remove",
+        entity_category=EntityCategory.CONFIG,
+        press_fn=lambda c: c.async_reset_charcoal(),
+    ),
+    SpectraButtonDescription(
+        key="reset_strainer",
+        translation_key="reset_strainer",
+        icon="mdi:filter-remove",
+        entity_category=EntityCategory.CONFIG,
+        press_fn=lambda c: c.async_reset_strainer(),
+    ),
 )
 
 
@@ -83,7 +97,7 @@ class SpectraButton(ButtonEntity):
         key = self.entity_description.key
         state = self._coordinator.state
 
-        if key == "reset_prefilter":
+        if key in ("reset_prefilter", "reset_charcoal", "reset_strainer"):
             return True
         if key == "start":
             return state in (

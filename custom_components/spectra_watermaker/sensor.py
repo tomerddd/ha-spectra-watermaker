@@ -333,6 +333,60 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         suggested_display_precision=1,
         value_fn=lambda c: c.storage.prefilter_hours,
     ),
+    # ── Charcoal filter maintenance ──
+    SpectraSensorDescription(
+        key="charcoal_last_changed",
+        translation_key="charcoal_last_changed",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:filter-cog-outline",
+        value_fn=lambda c: (
+            datetime.fromisoformat(c.storage.charcoal_last_changed)
+            if c.storage.charcoal_last_changed
+            else None
+        ),
+    ),
+    SpectraSensorDescription(
+        key="charcoal_days_ago",
+        translation_key="charcoal_days_ago",
+        native_unit_of_measurement="days",
+        icon="mdi:calendar-alert",
+        value_fn=lambda c: _days_since(c.storage.charcoal_last_changed),
+    ),
+    SpectraSensorDescription(
+        key="charcoal_hours_since_change",
+        translation_key="charcoal_hours_since_change",
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        icon="mdi:filter-outline",
+        suggested_display_precision=1,
+        value_fn=lambda c: c.storage.charcoal_hours,
+    ),
+    # ── Raw water strainer maintenance ──
+    SpectraSensorDescription(
+        key="strainer_last_changed",
+        translation_key="strainer_last_changed",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:filter-cog-outline",
+        value_fn=lambda c: (
+            datetime.fromisoformat(c.storage.strainer_last_changed)
+            if c.storage.strainer_last_changed
+            else None
+        ),
+    ),
+    SpectraSensorDescription(
+        key="strainer_days_ago",
+        translation_key="strainer_days_ago",
+        native_unit_of_measurement="days",
+        icon="mdi:calendar-alert",
+        value_fn=lambda c: _days_since(c.storage.strainer_last_changed),
+    ),
+    SpectraSensorDescription(
+        key="strainer_hours_since_change",
+        translation_key="strainer_hours_since_change",
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        icon="mdi:filter-outline",
+        suggested_display_precision=1,
+        value_fn=lambda c: c.storage.strainer_hours,
+    ),
 )
 
 
@@ -369,6 +423,12 @@ class SpectraSensor(SensorEntity):
             "prefilter_last_changed",
             "prefilter_days_ago",
             "prefilter_hours_since_change",
+            "charcoal_last_changed",
+            "charcoal_days_ago",
+            "charcoal_hours_since_change",
+            "strainer_last_changed",
+            "strainer_days_ago",
+            "strainer_hours_since_change",
             "state",
         ):
             return True

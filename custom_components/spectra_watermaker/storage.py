@@ -114,6 +114,50 @@ class SpectraStorage:
         self.prefilter_last_changed = datetime.now(timezone.utc).isoformat()
         self.prefilter_hours = 0.0
 
+    # Charcoal filter
+    @property
+    def charcoal_last_changed(self) -> str | None:
+        return self._data.get("charcoal_last_changed")
+
+    @charcoal_last_changed.setter
+    def charcoal_last_changed(self, value: str | None) -> None:
+        self._data["charcoal_last_changed"] = value
+
+    @property
+    def charcoal_hours(self) -> float:
+        return self._data.get("charcoal_hours", 0.0)
+
+    @charcoal_hours.setter
+    def charcoal_hours(self, value: float) -> None:
+        self._data["charcoal_hours"] = value
+
+    def reset_charcoal(self) -> None:
+        """Reset charcoal filter tracking to now."""
+        self.charcoal_last_changed = datetime.now(timezone.utc).isoformat()
+        self.charcoal_hours = 0.0
+
+    # Raw water strainer
+    @property
+    def strainer_last_changed(self) -> str | None:
+        return self._data.get("strainer_last_changed")
+
+    @strainer_last_changed.setter
+    def strainer_last_changed(self, value: str | None) -> None:
+        self._data["strainer_last_changed"] = value
+
+    @property
+    def strainer_hours(self) -> float:
+        return self._data.get("strainer_hours", 0.0)
+
+    @strainer_hours.setter
+    def strainer_hours(self, value: float) -> None:
+        self._data["strainer_hours"] = value
+
+    def reset_strainer(self) -> None:
+        """Reset raw water strainer tracking to now."""
+        self.strainer_last_changed = datetime.now(timezone.utc).isoformat()
+        self.strainer_hours = 0.0
+
 
 class SpectraHistoryStorage:
     """Manages run history for the Spectra Watermaker integration."""

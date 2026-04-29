@@ -533,6 +533,18 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._storage.async_save()
         self.async_set_updated_data({})
 
+    async def async_reset_charcoal(self) -> None:
+        """Reset charcoal filter tracking to now."""
+        self._storage.reset_charcoal()
+        await self._storage.async_save()
+        self.async_set_updated_data({})
+
+    async def async_reset_strainer(self) -> None:
+        """Reset raw water strainer tracking to now."""
+        self._storage.reset_strainer()
+        await self._storage.async_save()
+        self.async_set_updated_data({})
+
     async def async_power_on(self) -> None:
         """Turn on power switch."""
         if not self._power_switch:
@@ -1031,6 +1043,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._storage.total_liters += unsaved_liters
         self._storage.total_hours += duration_minutes / 60
         self._storage.prefilter_hours += duration_minutes / 60
+        self._storage.charcoal_hours += duration_minutes / 60
+        self._storage.strainer_hours += duration_minutes / 60
         self.hass.async_create_task(
             self._storage.async_save(), name="spectra_save_storage"
         )
