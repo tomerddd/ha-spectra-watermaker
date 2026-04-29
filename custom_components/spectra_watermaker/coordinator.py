@@ -152,6 +152,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._flush_tds_samples: list[float] = []
         self._flush_pressure_samples: list[float] = []
         self._flush_flow_samples: list[float] = []
+        self._flush_liters: float = 0.0
+        self._flush_start_tank_port: float | None = None
+        self._flush_start_tank_stbd: float | None = None
 
         # Periodic time polling task
         self._time_poll_task: asyncio.Task[None] | None = None
@@ -893,6 +896,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._flush_tds_samples = []
             self._flush_pressure_samples = []
             self._flush_flow_samples = []
+            self._flush_liters = 0.0
+            self._flush_start_tank_port = self._get_tank_level(self._tank_port)
+            self._flush_start_tank_stbd = self._get_tank_level(self._tank_stbd)
             self._fired_anomalies = set()
 
         # RUNNING -> IDLE (abnormal: flush skipped/interrupted)
@@ -1165,6 +1171,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._flush_pressure_samples.append(data.feed_pressure_psi)
         if data.product_flow_gph > 0:
             self._flush_flow_samples.append(data.product_flow_gph)
+            # Estimate liters used for flush (~1 sample/sec)
+            self._flush_liters += data.product_flow_lph / 3600
 
     def _on_flush_complete(self) -> None:
         """Handle flush completion."""
@@ -1174,7 +1182,12 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._storage.async_save(), name="spectra_save_flush"
         )
 
-        self._fire_event("flush_complete")
+        self._fire_event(
+            "flush_complete",
+            flush_liters=round(getattr(self, "_flush_liters", 0.0), 1),
+            tank_port_start_pct=getattr(self, "_flush_start_tank_port", None),
+            tank_stbd_start_pct=getattr(self, "_flush_start_tank_stbd", None),
+        )
 
         # Log flush summary
         if self._flush_pressure_samples:
