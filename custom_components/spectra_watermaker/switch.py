@@ -40,8 +40,14 @@ class SpectraPowerSwitch(SwitchEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available."""
-        return True
+        """Only allow toggle when idle-ish (not mid-run or flushing)."""
+        return self._coordinator.state in (
+            WatermakerState.OFF,
+            WatermakerState.IDLE,
+            WatermakerState.PROMPT,
+            WatermakerState.ERROR,
+            WatermakerState.BOOTING,
+        )
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn on the watermaker power."""
