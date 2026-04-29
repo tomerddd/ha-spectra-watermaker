@@ -156,6 +156,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._flush_start_time: float = 0.0
         self._flush_start_tank_port: float | None = None
         self._flush_start_tank_stbd: float | None = None
+        self._last_prefilter_health: float | None = None
+        self._last_charcoal_health: float | None = None
+        self._last_strainer_health: float | None = None
 
         # Periodic time polling task
         self._time_poll_task: asyncio.Task[None] | None = None
@@ -688,53 +691,51 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Estimate prefilter health based on feed pressure rise.
 
         New filter = 100%, at pressure_limit = 0%.
+        Computed while running, last known value shown otherwise.
         """
         baseline = self._storage.prefilter_baseline_feed_pressure
-        if baseline is None or self._state != WatermakerState.RUNNING:
-            return None
-        current = self._data.feed_pressure_psi
-        if current <= 0:
-            return None
-        profile = self._ensure_model_profile()
-        limit = profile["pressure_limit"]
-        if limit <= baseline:
-            return None
-        health = max(0.0, min(100.0, (limit - current) / (limit - baseline) * 100))
-        return round(health, 0)
+        if baseline is None:
+            return self._last_prefilter_health
+        if self._state == WatermakerState.RUNNING and self._data.feed_pressure_psi > 0:
+            profile = self._ensure_model_profile()
+            limit = profile["pressure_limit"]
+            if limit > baseline:
+                health = max(0.0, min(100.0, (limit - self._data.feed_pressure_psi) / (limit - baseline) * 100))
+                self._last_prefilter_health = round(health, 0)
+        return self._last_prefilter_health
 
     @property
     def charcoal_health_pct(self) -> float | None:
         """Estimate charcoal filter health based on flush flow drop.
 
         New filter = 100%, no flow = 0%.
+        Computed during flushing, last known value shown otherwise.
         """
         baseline = self._storage.charcoal_baseline_flush_flow
         if baseline is None or baseline <= 0:
-            return None
-        if self._state != WatermakerState.FLUSHING or not self._flush_flow_samples:
-            # Use last known value — show latest from last flush
-            return None
-        avg_flow = sum(self._flush_flow_samples[-10:]) / len(self._flush_flow_samples[-10:])
-        health = max(0.0, min(100.0, avg_flow / baseline * 100))
-        return round(health, 0)
+            return self._last_charcoal_health
+        if self._state == WatermakerState.FLUSHING and self._flush_flow_samples:
+            avg_flow = sum(self._flush_flow_samples[-10:]) / len(self._flush_flow_samples[-10:])
+            health = max(0.0, min(100.0, avg_flow / baseline * 100))
+            self._last_charcoal_health = round(health, 0)
+        return self._last_charcoal_health
 
     @property
     def strainer_health_pct(self) -> float | None:
         """Estimate strainer health based on boost pressure drop.
 
         New strainer = 100%, at alarm threshold (10 PSI) = 0%.
+        Computed while running, last known value shown otherwise.
         """
         baseline = self._storage.strainer_baseline_boost_pressure
-        if baseline is None or self._state != WatermakerState.RUNNING:
-            return None
-        current = self._data.boost_pressure_psi
-        if current <= 0:
-            return None
-        alarm = 10.0  # Spectra alarm threshold
-        if baseline <= alarm:
-            return None
-        health = max(0.0, min(100.0, (current - alarm) / (baseline - alarm) * 100))
-        return round(health, 0)
+        if baseline is None:
+            return self._last_strainer_health
+        if self._state == WatermakerState.RUNNING and self._data.boost_pressure_psi > 0:
+            alarm = 10.0
+            if baseline > alarm:
+                health = max(0.0, min(100.0, (self._data.boost_pressure_psi - alarm) / (baseline - alarm) * 100))
+                self._last_strainer_health = round(health, 0)
+        return self._last_strainer_health
 
     # ──────────────────────────────────────────────
     # Events and anomaly detection
@@ -838,8 +839,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         _LOGGER.warning("Mid-run prompt on page %s: %s", page, message)
 
-        # Page 43 with salinity is fatal — handled in state transition
-        if page == "43" and "salinity" in message.lower():
+        # Fatal pages — handled by _handle_run_error in state transition
+        if page in ("43", "14") or "salinity" in message.lower() or "warning" in label0.lower():
             return
 
         # Non-fatal: fire warning event and auto-dismiss
