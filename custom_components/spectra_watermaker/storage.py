@@ -154,7 +154,7 @@ class SpectraStorage:
         self._data["strainer_hours"] = value
 
     def reset_strainer(self) -> None:
-        """Reset raw water strainer tracking to now."""
+        """Reset raw water strainer cleaning date to now."""
         self.strainer_last_changed = datetime.now(timezone.utc).isoformat()
         self.strainer_hours = 0.0
 

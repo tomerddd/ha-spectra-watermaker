@@ -168,13 +168,13 @@
         "name": "Charcoal filter hours since change"
       },
       "strainer_last_changed": {
-        "name": "Raw strainer last changed"
+        "name": "Raw strainer last cleaned"
       },
       "strainer_days_ago": {
-        "name": "Raw strainer days ago"
+        "name": "Raw strainer days since cleaning"
       },
       "strainer_hours_since_change": {
-        "name": "Raw strainer hours since change"
+        "name": "Raw strainer hours since cleaning"
       }
     },
     "binary_sensor": {
