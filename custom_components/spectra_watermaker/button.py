@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, MANUFACTURER, DEFAULT_MODEL
 from .coordinator import SpectraCoordinator
+from .models import WatermakerState
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -78,11 +79,35 @@ class SpectraButton(ButtonEntity):
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available."""
-        # Reset prefilter is always available
-        if self.entity_description.key == "reset_prefilter":
+        """Return True if entity is available based on current state."""
+        key = self.entity_description.key
+        state = self._coordinator.state
+
+        if key == "reset_prefilter":
             return True
-        return True  # Buttons handle state checks internally
+        if key == "start":
+            return state in (
+                WatermakerState.OFF,
+                WatermakerState.IDLE,
+                WatermakerState.PROMPT,
+                WatermakerState.ERROR,
+            )
+        if key == "stop":
+            return state in (WatermakerState.RUNNING, WatermakerState.FLUSHING)
+        if key == "flush":
+            return state in (WatermakerState.IDLE, WatermakerState.PROMPT)
+        return True
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._handle_coordinator_update)
+        )
 
 
 async def async_setup_entry(
