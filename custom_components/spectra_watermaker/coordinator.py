@@ -1211,7 +1211,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info("Charcoal baseline captured: end_tds=%.1f PPM", end_tds)
 
         # Save flush record to history
-        flush_duration = time.monotonic() - self._flush_start_time if self._flush_start_time else 0.0
+        flush_duration = time.monotonic() - self._flush_start_time if self._flush_start_time > 0 else 0.0
         flush_record = FlushRecord(
             timestamp=datetime.now(timezone.utc).isoformat(),
             duration_seconds=round(flush_duration, 0),
