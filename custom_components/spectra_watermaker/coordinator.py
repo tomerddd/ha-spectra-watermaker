@@ -861,7 +861,11 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info("Auto-dismissed mid-run prompt on page %s", page)
 
     def _handle_run_error(self) -> None:
-        """Handle a fatal error that stopped the run."""
+        """Handle a fatal error that stopped the run.
+
+        Fires error event, dismisses the prompt, stops the post-error flush,
+        and returns to idle.
+        """
         ui = self._ui_state
         label0 = getattr(ui, "label0", "") or ""
         label1 = getattr(ui, "label1", "") or ""
@@ -880,6 +884,43 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             error_message=error_msg,
             will_retry=False,
         )
+
+        # Dismiss prompt and stop post-error flush to return to idle
+        self.hass.async_create_task(
+            self._dismiss_error_and_stop_flush(ui.page),
+            name="spectra_dismiss_error",
+        )
+
+    async def _dismiss_error_and_stop_flush(self, page: str) -> None:
+        """Dismiss error prompt, wait for flush, stop it, return to idle."""
+        try:
+            # Dismiss the error prompt
+            await asyncio.sleep(1.0)
+            if self._ui_connected:
+                await self._client.send_command(page, "BUTTON0")
+                _LOGGER.info("Dismissed error prompt on page %s", page)
+
+            # Wait for flushing state (Spectra auto-flushes after error)
+            for _ in range(15):
+                if self._state == WatermakerState.FLUSHING:
+                    break
+                await asyncio.sleep(2.0)
+
+            # Stop the flush after a few seconds (let it run briefly)
+            if self._state == WatermakerState.FLUSHING:
+                await asyncio.sleep(5.0)
+                await self._protocol.stop()
+                _LOGGER.info("Stopped post-error flush")
+
+            # Wait for idle
+            for _ in range(15):
+                if self._state in (WatermakerState.IDLE, WatermakerState.PROMPT):
+                    break
+                await asyncio.sleep(2.0)
+
+            _LOGGER.info("Error recovery complete, state: %s", self._state)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Error during dismiss/stop sequence")
 
     # ──────────────────────────────────────────────
     # State machine
