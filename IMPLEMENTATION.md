@@ -19,7 +19,7 @@ custom_components/spectra_watermaker/
 │
 ├── HA integration layer:
 │   ├── coordinator.py — the brain: state machine, run tracking, auto-stop,
-│   │                    time polling, events, anomaly detection, salinity retry
+│   │                    time polling, events, anomaly detection
 │   ├── sensor.py      — 40+ sensors via EntityDescription
 │   ├── binary_sensor.py — 3 binary sensors
 │   ├── button.py      — 7 buttons (start, stop, flush, reset prefilter/charcoal/strainer)
@@ -77,10 +77,6 @@ OFF ──power_on──→ BOOTING ──ws_connects──→ PROMPT ──auto
  │                                                                    │
  │                                                                    ↓
  └──auto_off(5min)──← IDLE ←──flush_done──← FLUSHING ←──stop──← RUNNING
-                                                                    │
-                                                               salinity error?
-                                                                    │
-                                                              retry (1x max)
 ```
 
 **State detection priority** (coordinator.py → protocol.detect_state()):
@@ -96,7 +92,7 @@ OFF ──power_on──→ BOOTING ──ws_connects──→ PROMPT ──auto
 - `→ RUNNING`: starts run tracking, starts time polling, fires `run_started` event
 - `RUNNING → FLUSHING`: ends run tracking, fires `run_completed` event, resets flush tracking, resets anomaly set
 - `RUNNING → IDLE`: ends run tracking (abnormal — flush skipped)
-- `RUNNING → PROMPT`: salinity check — if page 43 or "salinity" in label, triggers auto-retry; otherwise device_reboot
+- `RUNNING → PROMPT`: error check — if page 43 or "salinity"/"warning" in label, fires `run_error` event and dismisses; otherwise device_reboot
 - `RUNNING → BOOTING`: device_reboot stop reason
 - `RUNNING → anything else`: error stop reason
 - `FLUSHING → IDLE`: stops time polling, records flush, checks end-of-flush TDS, starts auto-off timer
@@ -114,7 +110,7 @@ Single event type `spectra_watermaker_event` with a `type` field. All events inc
 |------|------|----------|
 | `run_started` | RUNNING entered | `duration_hours`, tank levels at start |
 | `run_completed` | RUNNING→FLUSHING | `duration_minutes`, `liters_produced`, `stop_reason`, tanks before/after |
-| `run_error` | Fatal error (salinity) | `error_page`, `error_message`, `will_retry`, `duration_minutes` |
+| `run_error` | Fatal error (salinity, etc.) | `error_page`, `error_message`, `duration_minutes` |
 | `warning` | Non-fatal prompt mid-run, auto-dismissed | `page`, `message` |
 | `anomaly` | Sensor out of bounds | `metric`, `value`, `expected_min`, `expected_max`, `possible_causes`, `phase` |
 | `prompt_dismissed` | Boot prompt dismissed | `page`, `message` |
@@ -150,21 +146,10 @@ Average of last 10 TDS samples checked against 1000 PPM (Spectra spec: should no
 ### Dedup
 `_fired_anomalies: set[str]` tracks which anomalies have fired. Reset on RUNNING→FLUSHING transition and on flush complete.
 
-## Salinity Auto-Retry
-
-When RUNNING→PROMPT with page 43 or label containing "salinity":
-1. `_end_run_tracking()` called first (saves the failed run record)
-2. `_fire_event("run_error", will_retry=True/False)`
-3. Max 1 retry (`_salinity_retry_count`)
-4. If retrying: cancel auto-off timer → dismiss warning → wait for flushing → stop flush → wait for idle → restart with same duration
-5. If max retries reached: give up, let auto-off handle power-down
-6. Counter resets after 5 minutes of successful running
-7. Wrapped in try/except to prevent silent failures
-
 ## Mid-Run Prompt Handling
 
 In `_on_ui_message`, if a prompt page appears while RUNNING:
-1. Page 43 + "salinity" → skip (handled by salinity retry in state transition)
+1. Page 43/14 + "salinity"/"warning" → skip (handled by `_handle_run_error` in state transition)
 2. All others: log, fire `warning` event, auto-dismiss via BUTTON0, run continues
 
 ## Flush Data Tracking
@@ -216,7 +201,7 @@ Buttons and switch subscribe to coordinator updates to reflect state changes imm
 - Fires after `auto_off_minutes` (default 5)
 - Checks state is still IDLE/OFF/PROMPT before powering off
 - Fires `power_off` event
-- Cancelled by: new start command, manual power-off, or salinity retry
+- Cancelled by: new start command or manual power-off
 
 ### Error recovery
 - `async_start_watermaker` recovers from ERROR state if outlet is confirmed off
@@ -286,7 +271,7 @@ During a run, `_run_liters` is saved to `total_liters` in storage every 60 secon
 | 0.2.11 | Start from OFF fails (WS backoff) | Added `client.reconnect()`, extended wait to 60s |
 | 0.2.12 | Power switch shows "on" during ERROR | Added ERROR and BOOTING to `is_on` exclusion |
 | 0.2.13 | Auto power-off missed after HA restart | Auto-off on any IDLE/PROMPT transition |
-| 0.9.0 | Events, anomaly detection, salinity retry, flush monitoring, maintenance tracking, button availability |
+| 0.9.0 | Events, anomaly detection, flush monitoring, maintenance tracking, button availability |
 
 ## Known Limitations
 
@@ -308,7 +293,7 @@ During a run, `_run_liters` is saved to `total_liters` in storage every 60 secon
 | Command sequences (start/stop/flush) | `protocol.py` |
 | State machine logic | `coordinator.py` → `_handle_state_transition()` |
 | Events / anomaly detection | `coordinator.py` → `_fire_event()`, `_check_anomalies()` |
-| Salinity retry | `coordinator.py` → `_handle_salinity_retry()` |
+| Run error handling | `coordinator.py` → `_handle_run_error()` |
 | Mid-run prompt handling | `coordinator.py` → `_handle_mid_run_prompt()` |
 | Run tracking / PPM rules | `coordinator.py` → `_track_run_data()`, `_handle_toggle_change()` |
 | Flush data tracking | `coordinator.py` → `_track_flush_data()`, `_on_flush_complete()` |

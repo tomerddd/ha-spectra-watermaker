@@ -301,6 +301,17 @@ class SpectraProtocol:
 
         Returns True if system reached idle.
         """
+        # Wait for the first UI message if page is still empty (WS just connected)
+        if not self._current_ui.page:
+            _LOGGER.debug("Waiting for first UI message before dismissing prompts")
+            for _ in range(15):
+                await asyncio.sleep(2.0)
+                if self._current_ui.page:
+                    break
+            if not self._current_ui.page:
+                _LOGGER.warning("No UI page received during boot prompt dismissal")
+                return False
+
         max_attempts = 10
         for _ in range(max_attempts):
             page = self._current_ui.page

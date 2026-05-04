@@ -24,8 +24,6 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
 - **Water destination toggle** — switch between tank fill and overboard
 - **Power management** — optional smart outlet integration to power on/off the watermaker, with automatic boot prompt dismissal
 - **Tank full auto-stop** — connect your tank level sensors (any source) and set a threshold; the integration stops the watermaker when tanks are full (30s debounce to handle sloshing)
-- **Salinity auto-retry** — if the watermaker stops due to high salinity on cold start, automatically dismisses the error, stops the flush, and retries once
-
 ### Anomaly Detection
 - **Continuous sensor monitoring** during both running and flushing phases
 - **Model-specific thresholds** auto-detected from the device name (Newport 1000/700/400, Ventura, Catalina)
@@ -80,7 +78,7 @@ The integration fires `spectra_watermaker_event` events for all key lifecycle mo
 |------|------|----------|
 | `run_started` | Watermaker begins producing | `duration_hours`, `tank_port_pct`, `tank_stbd_pct` |
 | `run_completed` | Run finishes (enters flush) | `duration_minutes`, `liters_produced`, `stop_reason`, tank levels before and after |
-| `run_error` | Fatal error stops run | `error_page`, `error_message`, `will_retry`, `duration_minutes` |
+| `run_error` | Fatal error stops run | `error_page`, `error_message`, `duration_minutes` |
 | `warning` | Non-fatal prompt auto-dismissed mid-run | `page`, `message` |
 | `anomaly` | Sensor value out of bounds | `metric`, `value`, `expected_min`, `expected_max`, `possible_causes`, `phase` |
 | `prompt_dismissed` | Boot prompt auto-dismissed | `page`, `message` |
@@ -123,19 +121,6 @@ The integration fires `spectra_watermaker_event` events for all key lifecycle mo
 The integration continuously monitors sensor data during **running** and **flushing** phases. Thresholds are automatically selected based on the detected Spectra model. Each anomaly fires once per run/flush cycle to avoid notification spam.
 
 Anomaly checks are skipped during the first 2 minutes of a run (startup settling period).
-
-### Salinity Auto-Retry
-
-On cold starts, the Spectra may stop with a "Salinity exceeds maximum limit" error before the membranes warm up. The integration handles this automatically:
-
-1. Detects the salinity error (page 43)
-2. Fires a `run_error` event with `will_retry: true`
-3. Dismisses the error prompt
-4. Stops the post-error flush
-5. Restarts the watermaker with the same duration
-6. If the retry also fails, fires `run_error` with `will_retry: false` and gives up
-
-The retry counter resets after 5 minutes of successful running.
 
 ### Mid-Run Warnings
 
@@ -333,7 +318,7 @@ logger:
 - **Cannot connect during setup** — Ensure the watermaker is powered on and the Spectra Connect module is on your network. Try accessing `http://<IP>` in a browser.
 - **State stuck on "booting"** — The watermaker may be showing a prompt that needs dismissal. Check the Spectra web interface.
 - **Tank auto-stop not firing** — Verify your tank sensors are reporting values in percent (0–100). Check the threshold setting.
-- **Salinity error on cold start** — Normal for the first 1-2 minutes. The integration retries once automatically. If it persists, check membrane condition.
+- **Salinity error on cold start** — Normal for the first 1-2 minutes. The integration dismisses the error and stops the post-error flush. If it persists, check membrane condition or salinity probe.
 
 ## Contributing
 

@@ -839,7 +839,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         _LOGGER.warning("Mid-run prompt on page %s: %s", page, message)
 
-        # Fatal pages — handled by _handle_run_error in state transition
+        # Fatal error pages — handled by _handle_run_error in state transition
         if page in ("43", "14") or "salinity" in message.lower() or "warning" in label0.lower():
             return
 
@@ -882,7 +882,6 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             duration_minutes=round(duration_minutes, 1),
             error_page=ui.page,
             error_message=error_msg,
-            will_retry=False,
         )
 
         # Dismiss prompt and stop post-error flush to return to idle
