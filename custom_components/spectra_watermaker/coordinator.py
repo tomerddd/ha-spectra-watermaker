@@ -428,10 +428,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning("Another command is in progress")
             return False
 
-        # Recover from error state if outlet is off
+        # Recover from error state if outlet is not confirmed on
         if self._state == WatermakerState.ERROR and self._power_switch:
             power_state = self.hass.states.get(self._power_switch)
-            if power_state and power_state.state == "off":
+            if not power_state or power_state.state != "on":
                 self._state = WatermakerState.OFF
 
         duration = duration_hours if duration_hours is not None else self._run_duration
