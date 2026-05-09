@@ -1459,7 +1459,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _start_time_polling(self) -> None:
         """Start periodic navigation to page 5 to read elapsed/remaining time."""
         self._stop_time_polling()
-        self._time_poll_task = self.hass.async_create_task(
+        self._time_poll_task = asyncio.create_task(
             self._poll_time_loop(), name="spectra_time_poll"
         )
 
