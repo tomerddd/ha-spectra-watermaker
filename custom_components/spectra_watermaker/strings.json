@@ -184,6 +184,9 @@
       },
       "strainer_health": {
         "name": "Raw strainer health"
+      },
+      "energy_estimate": {
+        "name": "Energy estimate"
       }
     },
     "binary_sensor": {

@@ -15,6 +15,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     EntityCategory,
+    UnitOfEnergy,
     UnitOfPressure,
     UnitOfTemperature,
     UnitOfElectricPotential,
@@ -412,6 +413,17 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         suggested_display_precision=0,
         value_fn=lambda c: c.strainer_health_pct,
     ),
+    # ── Energy estimation ──
+    SpectraSensorDescription(
+        key="energy_estimate",
+        translation_key="energy_estimate",
+        native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        icon="mdi:lightning-bolt-outline",
+        suggested_display_precision=0,
+        value_fn=lambda c: c.energy_estimate_wh,
+        attr_fn=lambda c: c.energy_estimate_attrs,
+    ),
 )
 
 
@@ -455,6 +467,7 @@ class SpectraSensor(SensorEntity):
             "strainer_days_ago",
             "strainer_hours_since_change",
             "state",
+            "energy_estimate",
         ):
             return True
         # Last run sensors available if there's history

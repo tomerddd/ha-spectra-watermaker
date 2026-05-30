@@ -193,6 +193,40 @@ class SpectraStorage:
     def strainer_baseline_boost_pressure(self, value: float | None) -> None:
         self._data["strainer_baseline_boost_pressure"] = value
 
+    # ── Energy estimation rolling averages ──
+
+    @property
+    def avg_run_power_watts(self) -> float | None:
+        return self._data.get("avg_run_power_watts")
+
+    @avg_run_power_watts.setter
+    def avg_run_power_watts(self, value: float | None) -> None:
+        self._data["avg_run_power_watts"] = value
+
+    @property
+    def avg_flush_power_watts(self) -> float | None:
+        return self._data.get("avg_flush_power_watts")
+
+    @avg_flush_power_watts.setter
+    def avg_flush_power_watts(self, value: float | None) -> None:
+        self._data["avg_flush_power_watts"] = value
+
+    @property
+    def avg_flush_duration_minutes(self) -> float | None:
+        return self._data.get("avg_flush_duration_minutes")
+
+    @avg_flush_duration_minutes.setter
+    def avg_flush_duration_minutes(self, value: float | None) -> None:
+        self._data["avg_flush_duration_minutes"] = value
+
+    @property
+    def power_runs_tracked(self) -> int:
+        return self._data.get("power_runs_tracked", 0)
+
+    @power_runs_tracked.setter
+    def power_runs_tracked(self, value: int) -> None:
+        self._data["power_runs_tracked"] = value
+
 
 class SpectraHistoryStorage:
     """Manages run history for the Spectra Watermaker integration."""

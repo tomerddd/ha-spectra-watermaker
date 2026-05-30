@@ -200,6 +200,7 @@ class RunRecord:
     avg_water_temp_f: float | None = None
     stop_reason: str = StopReason.MANUAL
     data_incomplete: bool = False
+    avg_power_watts: float | None = None
 
     def to_dict(self) -> dict:
         """Serialize to dict for storage."""
@@ -216,6 +217,7 @@ class RunRecord:
             "avg_water_temp_f": self.avg_water_temp_f,
             "stop_reason": self.stop_reason,
             "data_incomplete": self.data_incomplete,
+            "avg_power_watts": self.avg_power_watts,
         }
 
     @classmethod
@@ -234,6 +236,7 @@ class RunRecord:
             avg_water_temp_f=data.get("avg_water_temp_f"),
             stop_reason=data.get("stop_reason", StopReason.MANUAL),
             data_incomplete=data.get("data_incomplete", False),
+            avg_power_watts=data.get("avg_power_watts"),
         )
 
 
@@ -248,6 +251,7 @@ class FlushRecord:
     start_tds: float | None = None
     end_tds: float | None = None
     liters_used: float = 0.0
+    avg_power_watts: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -258,6 +262,7 @@ class FlushRecord:
             "start_tds": self.start_tds,
             "end_tds": self.end_tds,
             "liters_used": self.liters_used,
+            "avg_power_watts": self.avg_power_watts,
         }
 
     @classmethod
@@ -270,4 +275,5 @@ class FlushRecord:
             start_tds=data.get("start_tds"),
             end_tds=data.get("end_tds"),
             liters_used=data.get("liters_used", 0.0),
+            avg_power_watts=data.get("avg_power_watts"),
         )

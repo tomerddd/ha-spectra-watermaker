@@ -51,6 +51,9 @@ PAGES_STARTUP = {"10", "101"}  # Page 10 = screensaver/power interrupt/countdown
 # Run history
 DEFAULT_HISTORY_LIMIT = 50
 
+# Energy estimation EMA smoothing factor (0-1, higher = more weight on recent)
+EMA_ALPHA = 0.3
+
 # PPM stabilization
 PPM_IGNORE_STARTUP_SEC = 60
 
@@ -89,7 +92,7 @@ EVENT_SPECTRA_WATERMAKER = "spectra_watermaker_event"
 # Thresholds auto-selected from "device" field on port 9001.
 # Pressure: PSI, Flow: GPH, TDS: PPM, Temp: °F, Voltage: V.
 
-ANOMALY_STARTUP_SKIP_SEC = 120  # Skip checks for first 2 min of run
+ANOMALY_STARTUP_SKIP_SEC = 180  # Skip checks for first 3 min of run (HP pump ramp-up)
 PPM_MEMBRANE_REPLACE = 748  # Factory default PPM rejection threshold
 FLUSH_TDS_MAX = 1000  # End-of-flush TDS limit (per Spectra)
 OPERATING_TEMP_MIN_F = 36

@@ -31,6 +31,7 @@ from .const import (
     DEFAULT_WS_DATA_PORT,
     DEFAULT_WS_UI_PORT,
     DOMAIN,
+    EMA_ALPHA,
     EVENT_SPECTRA_WATERMAKER,
     FLUSH_END_TDS_CHECK,
     PAGES_PROMPT,
@@ -154,6 +155,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._flush_flow_samples: list[float] = []
         self._flush_liters: float = 0.0
         self._flush_start_time: float = 0.0
+        self._run_power_samples: list[float] = []
+        self._flush_power_samples: list[float] = []
         self._flush_start_tank_port: float | None = None
         self._flush_start_tank_stbd: float | None = None
         self._last_prefilter_health: float | None = None
@@ -329,6 +332,76 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return None
             return round(92.0 + (fp / 100.0 * 8.0), 1)
         return None
+
+    @property
+    def energy_estimate_wh(self) -> float | None:
+        """Estimated energy in Wh for the current or planned run + flush."""
+        run_power = self._storage.avg_run_power_watts
+        flush_power = self._storage.avg_flush_power_watts
+        flush_dur_min = self._storage.avg_flush_duration_minutes
+        if run_power is None:
+            return None
+
+        flush_wh = (
+            flush_power * flush_dur_min / 60
+            if flush_power is not None and flush_dur_min is not None
+            else 0.0
+        )
+
+        if self._state == WatermakerState.RUNNING:
+            remaining_min = self._parse_time_to_minutes(self._remaining_time)
+            if remaining_min is not None:
+                return round(run_power * remaining_min / 60 + flush_wh, 1)
+            return None
+        if self._state == WatermakerState.FLUSHING:
+            if flush_power is None or flush_dur_min is None:
+                return None
+            fp = self._flush_progress
+            if fp is not None and fp > 0:
+                remaining_frac = max(0.0, (100.0 - fp) / 100.0)
+                return round(flush_power * flush_dur_min / 60 * remaining_frac, 1)
+            return round(flush_wh, 1)
+
+        # Idle/off: estimate for configured run duration
+        run_wh = run_power * self._run_duration
+        return round(run_wh + flush_wh, 1)
+
+    @property
+    def energy_estimate_attrs(self) -> dict[str, Any]:
+        """Extra attributes for the energy estimate sensor."""
+        s = self._storage
+        run_wh = (
+            s.avg_run_power_watts * self._run_duration
+            if s.avg_run_power_watts is not None
+            else None
+        )
+        flush_wh = (
+            s.avg_flush_power_watts * s.avg_flush_duration_minutes / 60
+            if s.avg_flush_power_watts is not None and s.avg_flush_duration_minutes is not None
+            else None
+        )
+        total_wh = (
+            (run_wh or 0) + (flush_wh or 0)
+            if run_wh is not None
+            else None
+        )
+        tracked = s.power_runs_tracked
+        if tracked > 10:
+            confidence = "high"
+        elif tracked >= 3:
+            confidence = "medium"
+        else:
+            confidence = "low"
+        return {
+            "avg_run_power_watts": s.avg_run_power_watts,
+            "avg_flush_power_watts": s.avg_flush_power_watts,
+            "avg_flush_duration_minutes": s.avg_flush_duration_minutes,
+            "estimated_run_wh": round(run_wh, 1) if run_wh is not None else None,
+            "estimated_flush_wh": round(flush_wh, 1) if flush_wh is not None else None,
+            "estimated_total_wh": round(total_wh, 1) if total_wh is not None else None,
+            "confidence": confidence,
+            "runs_tracked": tracked,
+        }
 
     def _parse_time_to_minutes(self, time_str: str | None) -> float | None:
         """Parse a time string like '1h 20m', '45m', '2h' into minutes."""
@@ -779,6 +852,13 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elapsed = time.monotonic() - self._run_start_monotonic
             if elapsed < ANOMALY_STARTUP_SKIP_SEC:
                 return
+            # Don't check if HP pump hasn't reached operating pressure yet
+            if data.feed_pressure_psi < 50:
+                return
+        if phase == "flushing" and self._flush_start_time > 0:
+            flush_elapsed = time.monotonic() - self._flush_start_time
+            if flush_elapsed < 60:
+                return
 
         profile = self._ensure_model_profile()
         checks = profile.get(f"{phase}_checks", []) if phase == "flushing" else profile.get("running_checks", [])
@@ -1028,6 +1108,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._run_ppm_samples = []
         self._run_pressure_samples = []
         self._run_temp_samples = []
+        self._run_power_samples = []
         self._time_to_fill = None
         self._filling_started = False
         self._ppm_collection_enabled = False
@@ -1091,6 +1172,11 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self._run_temp_samples
             else None
         )
+        avg_power = (
+            sum(self._run_power_samples) / len(self._run_power_samples)
+            if self._run_power_samples
+            else None
+        )
 
         record = RunRecord(
             start_time=self._run_start_time.isoformat(),
@@ -1109,6 +1195,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             avg_water_temp_f=round(avg_temp, 1) if avg_temp is not None else None,
             stop_reason=self._stop_reason,
             data_incomplete=self._data_incomplete,
+            avg_power_watts=round(avg_power, 1) if avg_power is not None else None,
         )
 
         self._history.add_run(record)
@@ -1123,6 +1210,18 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._storage.prefilter_hours += duration_minutes / 60
         self._storage.charcoal_hours += duration_minutes / 60
         self._storage.strainer_hours += duration_minutes / 60
+
+        # Update energy estimation EMA for run power
+        if avg_power is not None:
+            old = self._storage.avg_run_power_watts
+            if old is None:
+                self._storage.avg_run_power_watts = round(avg_power, 1)
+            else:
+                self._storage.avg_run_power_watts = round(
+                    EMA_ALPHA * avg_power + (1 - EMA_ALPHA) * old, 1
+                )
+            self._storage.power_runs_tracked += 1
+
         self.hass.async_create_task(
             self._storage.async_save(), name="spectra_save_storage"
         )
@@ -1149,9 +1248,26 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._run_start_time = None
         self._integration_started = False
 
+    def _read_power_sensor(self) -> float | None:
+        """Read current power draw from configured power sensor entity."""
+        if not self._power_sensor:
+            return None
+        state = self.hass.states.get(self._power_sensor)
+        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return None
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            return None
+
     def _track_run_data(self, data: SpectraData) -> None:
         """Track per-second production data during a run."""
         elapsed = time.monotonic() - self._run_start_monotonic
+
+        # Sample power from configured power sensor
+        power = self._read_power_sensor()
+        if power is not None and power > 5:
+            self._run_power_samples.append(power)
 
         # Accumulate liters: only while toggle_tank == 0 (filling tank)
         if self._ui_state.toggle_tank == "0" and data.product_flow_gph > 0:
@@ -1216,6 +1332,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _track_flush_data(self, data: SpectraData) -> None:
         """Collect sensor data during flush cycle."""
+        # Sample power from configured power sensor
+        power = self._read_power_sensor()
+        if power is not None and power > 5:
+            self._flush_power_samples.append(power)
         if data.product_tds_ppm > 0:
             self._flush_tds_samples.append(data.product_tds_ppm)
         if data.feed_pressure_psi > 0:
@@ -1252,6 +1372,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Save flush record to history
         flush_duration = time.monotonic() - self._flush_start_time if self._flush_start_time > 0 else 0.0
+        avg_flush_power = (
+            sum(self._flush_power_samples) / len(self._flush_power_samples)
+            if self._flush_power_samples else None
+        )
         flush_record = FlushRecord(
             timestamp=datetime.now(timezone.utc).isoformat(),
             duration_seconds=round(flush_duration, 0),
@@ -1269,10 +1393,33 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if self._flush_tds_samples else None
             ),
             liters_used=round(self._flush_liters, 1),
+            avg_power_watts=round(avg_flush_power, 1) if avg_flush_power is not None else None,
         )
         self._history.add_flush(flush_record)
         self.hass.async_create_task(
             self._history.async_save(), name="spectra_save_flush_history"
+        )
+
+        # Update energy estimation EMAs for flush power and duration
+        if avg_flush_power is not None:
+            old = self._storage.avg_flush_power_watts
+            if old is None:
+                self._storage.avg_flush_power_watts = round(avg_flush_power, 1)
+            else:
+                self._storage.avg_flush_power_watts = round(
+                    EMA_ALPHA * avg_flush_power + (1 - EMA_ALPHA) * old, 1
+                )
+        if flush_duration > 0:
+            flush_duration_min = flush_duration / 60
+            old_dur = self._storage.avg_flush_duration_minutes
+            if old_dur is None:
+                self._storage.avg_flush_duration_minutes = round(flush_duration_min, 1)
+            else:
+                self._storage.avg_flush_duration_minutes = round(
+                    EMA_ALPHA * flush_duration_min + (1 - EMA_ALPHA) * old_dur, 1
+                )
+        self.hass.async_create_task(
+            self._storage.async_save(), name="spectra_save_flush_energy"
         )
 
         # Log flush summary
@@ -1294,6 +1441,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._flush_tds_samples = []
         self._flush_pressure_samples = []
         self._flush_flow_samples = []
+        self._flush_power_samples = []
         self._fired_anomalies = set()
 
         # Start auto power-off timer
