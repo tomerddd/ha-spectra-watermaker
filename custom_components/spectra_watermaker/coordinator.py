@@ -143,6 +143,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Tank full debounce
         self._tank_full_timer: asyncio.TimerHandle | None = None
         self._tank_unsub: list[CALLBACK_TYPE] = []
+        self._power_unsub: CALLBACK_TYPE | None = None
 
         # Event / anomaly monitoring
         self._model_profile: dict | None = None
@@ -464,6 +465,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Subscribe to tank sensors for auto-stop
         self._subscribe_tanks()
 
+        # Watch the outlet switch so internal state stays in sync with the
+        # physical power state (auto-off, external turn-off, startup timing).
+        self._subscribe_power_switch()
+
         self.async_set_updated_data({})
 
     async def async_stop(self) -> None:
@@ -475,6 +480,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for unsub in self._tank_unsub:
             unsub()
         self._tank_unsub.clear()
+
+        if self._power_unsub:
+            self._power_unsub()
+            self._power_unsub = None
 
         await self._client.disconnect()
         await self._storage.async_save()
@@ -501,10 +510,18 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning("Another command is in progress")
             return False
 
-        # Recover from error/booting state if outlet is not confirmed on
-        if self._state in (WatermakerState.ERROR, WatermakerState.BOOTING) and self._power_switch:
+        # Reconcile with the physical outlet before starting. If the outlet is
+        # off (or unavailable) the unit cannot actually be running/idle/booting,
+        # so any non-OFF state is stale — force OFF so the power-on sequence below
+        # fires regardless of what the in-memory state claims.
+        if self._power_switch:
             power_state = self.hass.states.get(self._power_switch)
-            if not power_state or power_state.state != "on":
+            if (not power_state or power_state.state != "on") and self._state != WatermakerState.OFF:
+                _LOGGER.info(
+                    "Outlet is %s but state was %s — resetting to OFF before start",
+                    power_state.state if power_state else "unavailable",
+                    self._state,
+                )
                 self._state = WatermakerState.OFF
 
         duration = duration_hours if duration_hours is not None else self._run_duration
@@ -1514,6 +1531,58 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.hass, entities, self._on_tank_state_change
         )
         self._tank_unsub.append(unsub)
+
+    def _subscribe_power_switch(self) -> None:
+        """Subscribe to the outlet switch to keep state in sync with hardware."""
+        if not self._power_switch:
+            return
+        self._power_unsub = async_track_state_change_event(
+            self.hass, [self._power_switch], self._on_power_switch_change
+        )
+
+    @callback
+    def _on_power_switch_change(self, event: Event) -> None:
+        """Keep internal state in sync with the physical outlet switch.
+
+        The outlet can be turned off outside the integration's control (auto-off
+        race, another automation, power glitch) or resolve to "off" late during
+        HA startup. Whenever that happens the unit is unpowered and cannot be in
+        any active state, so reconcile to OFF. A manual power-on boots/connects.
+        """
+        new_state = event.data.get("new_state")
+        if not new_state:
+            return
+        outlet = new_state.state
+
+        if outlet == "off":
+            if self._state != WatermakerState.OFF:
+                _LOGGER.info(
+                    "Outlet turned off — syncing watermaker state to OFF (was %s)",
+                    self._state,
+                )
+                self._cancel_auto_off_timer()
+                self._integration_powered_on = False
+                self._state = WatermakerState.OFF
+                self.hass.async_create_task(
+                    self._client.disconnect(),
+                    name="spectra_outlet_off_disconnect",
+                )
+                self.async_set_updated_data({})
+        elif outlet == "on":
+            # Ignore the on-event from our own start/flush/power-on sequence
+            # (those set _integration_powered_on before flipping the switch).
+            if (
+                self._state == WatermakerState.OFF
+                and not self._ui_connected
+                and not self._integration_powered_on
+            ):
+                _LOGGER.info("Outlet turned on externally — booting and connecting")
+                self._state = WatermakerState.BOOTING
+                self.hass.async_create_task(
+                    self._client.reconnect(),
+                    name="spectra_outlet_on_connect",
+                )
+                self.async_set_updated_data({})
 
     @callback
     def _on_tank_state_change(self, event: Event) -> None:
