@@ -316,6 +316,13 @@ class SpectraProtocol:
         for _ in range(max_attempts):
             page = self._current_ui.page
             label0 = self._current_ui.label0.lower()
+            # Prompt text can land in any label slot (e.g. the "stored with
+            # chemicals?" question arrives in label1, not label0), so match
+            # against all labels rather than just label0.
+            all_labels = " ".join(
+                getattr(self._current_ui, f"label{i}", "").lower()
+                for i in range(12)
+            )
 
             if page in {"4", "39", "48", "49"}:
                 _LOGGER.debug("System is idle on page %s", page)
@@ -346,16 +353,24 @@ class SpectraProtocol:
                 continue
 
             if page in {"1", "44", "45"}:
-                if "chemical" in label0 or "stored" in label0:
-                    # Find the "No" button
-                    no_btn = self._find_button_by_label("No")
-                    if no_btn:
-                        _LOGGER.info("Answering 'No' to chemical prompt (%s)", no_btn)
-                        await self._client.send_command(page, no_btn)
-                    else:
-                        # Fallback: try BUTTON1 (typically "No" is second)
-                        _LOGGER.info("Chemical prompt — 'No' not found, trying BUTTON1")
-                        await self._client.send_command(page, "BUTTON1")
+                # Page 1 is always the "Has the system been stored with
+                # chemicals?" prompt. Answering YES (BUTTON0) wrongly triggers a
+                # chemical de-pickle purge that bounces to page 10 and loops
+                # forever. The correct answer for normal operation is NO, so
+                # never press BUTTON0 here — find the "No" button, else BUTTON1.
+                is_chemical = (
+                    page == "1"
+                    or "chemical" in all_labels
+                    or "stored" in all_labels
+                )
+                if is_chemical:
+                    no_btn = self._find_button_by_label("No") or "BUTTON1"
+                    _LOGGER.info(
+                        "Answering 'No' to chemical/storage prompt on page %s (%s)",
+                        page,
+                        no_btn,
+                    )
+                    await self._client.send_command(page, no_btn)
                 else:
                     _LOGGER.info("Dismissing prompt page %s: %s", page, self._current_ui.label0)
                     await self._client.send_command(page, "BUTTON0")

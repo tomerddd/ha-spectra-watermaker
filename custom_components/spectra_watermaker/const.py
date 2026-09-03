@@ -192,12 +192,14 @@ _FLUSHING_CHECKS = [
     {
         "metric": "Feed pressure",
         "field": "feed_pressure_psi",
-        "min": 10,
+        # No low-pressure check during flushing: a freshwater flush runs with the
+        # seawater feed pump OFF, so feed_pressure_psi legitimately drops toward
+        # zero (~10 PSI). Whether the flush is actually moving water is validated
+        # by the "Product flow" check below. Keep only the high check to catch a
+        # high-pressure pump that failed to disengage.
+        "min": None,
         "max": 300,
-        "causes_low": [
-            "Flush pump not running",
-            "Flush valve not opening",
-        ],
+        "causes_low": [],
         "causes_high": [
             "High-pressure pump not disengaged",
             "Valve issue",
