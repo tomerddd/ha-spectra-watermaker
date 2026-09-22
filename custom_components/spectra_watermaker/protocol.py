@@ -186,7 +186,12 @@ class SpectraProtocol:
             # Wait for page 12 (text input)
             if await self._wait_for_page({"12"}, timeout=5.0):
                 # Send the duration value
-                duration_str = f"{duration_hours:.1f}"
+                # Format for the device: keep >=1 decimal so it parses as a
+                # float (1.0, 2.0 unchanged), but allow quarter-hour precision
+                # (0.25/0.75) for short runs instead of truncating to 0.1hr.
+                duration_str = f"{duration_hours:.2f}".rstrip("0")
+                if duration_str.endswith("."):
+                    duration_str += "0"
                 _LOGGER.debug("Setting duration to %s hours on page 12", duration_str)
                 await self._client.send_data("12", duration_str)
 

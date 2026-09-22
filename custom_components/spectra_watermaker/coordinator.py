@@ -258,7 +258,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @run_duration.setter
     def run_duration(self, value: float) -> None:
         """Set run duration and persist to storage."""
-        self._run_duration = max(0.5, min(8.0, value))
+        self._run_duration = max(0.25, min(8.0, value))
         self._storage.run_duration = self._run_duration
         self.hass.async_create_task(
             self._storage.async_save(), name="spectra_save_run_duration"
