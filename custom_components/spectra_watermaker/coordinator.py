@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .client import SpectraClient
 from .const import (
     ANOMALY_STARTUP_SKIP_SEC,
+    ANOMALY_FLUSH_SKIP_SEC,
     CONF_AUTO_OFF_DELAY,
     CONF_HOST,
     CONF_POWER_SENSOR,
@@ -874,7 +875,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return
         if phase == "flushing" and self._flush_start_time > 0:
             flush_elapsed = time.monotonic() - self._flush_start_time
-            if flush_elapsed < 60:
+            if flush_elapsed < ANOMALY_FLUSH_SKIP_SEC:
                 return
 
         profile = self._ensure_model_profile()

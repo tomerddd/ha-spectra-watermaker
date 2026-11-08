@@ -93,6 +93,7 @@ EVENT_SPECTRA_WATERMAKER = "spectra_watermaker_event"
 # Pressure: PSI, Flow: GPH, TDS: PPM, Temp: °F, Voltage: V.
 
 ANOMALY_STARTUP_SKIP_SEC = 180  # Skip checks for first 3 min of run (HP pump ramp-up)
+ANOMALY_FLUSH_SKIP_SEC = 120  # Skip checks for first 2 min of flush (flow ramp-up)
 PPM_MEMBRANE_REPLACE = 748  # Factory default PPM rejection threshold
 FLUSH_TDS_MAX = 1000  # End-of-flush TDS limit (per Spectra)
 OPERATING_TEMP_MIN_F = 36
