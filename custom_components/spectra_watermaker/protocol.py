@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from .client import SpectraClient
@@ -17,6 +18,9 @@ _PAGE_WAIT_TIMEOUT = 5.0
 # may need additional wait
 _SEQUENCE_SETTLE = 0.5
 
+# After the flush page disappears, ignore sensor-only "running" for this long
+_FLUSH_EXIT_GRACE = 30.0
+
 
 class SpectraProtocol:
     """High-level operations wrapping SpectraClient.
@@ -30,6 +34,7 @@ class SpectraProtocol:
         self._page_event: asyncio.Event = asyncio.Event()
         self._command_in_progress: bool = False
         self._command_lock: asyncio.Lock = asyncio.Lock()
+        self._last_flush_page_time: float = 0.0
 
     @property
     def current_ui(self) -> SpectraUIState:
@@ -415,13 +420,20 @@ class SpectraProtocol:
         """
         ui = self._current_ui
 
-        # Cross-reference with port 9001 data if available
-        if data and hasattr(data, "is_running") and data.is_running:
-            return WatermakerState.RUNNING
-
-        # Flushing pages
+        # Flushing pages first: a freshwater flush can exceed the 100 PSI
+        # is_running threshold (~100-140 PSI at flush speed), so the flush page
+        # must win over the sensor-data running check.
         if ui.is_flushing_page:
+            self._last_flush_page_time = time.monotonic()
             return WatermakerState.FLUSHING
+
+        # Cross-reference with port 9001 data if available. As a flush ends the
+        # page leaves "2" while flow/pressure are still high, so within the
+        # grace window only a real running page counts as RUNNING.
+        if data and hasattr(data, "is_running") and data.is_running:
+            just_flushed = time.monotonic() - self._last_flush_page_time < _FLUSH_EXIT_GRACE
+            if not just_flushed or ui.is_running_page:
+                return WatermakerState.RUNNING
 
         # Check label0 for state hints
         label0 = ui.label0.upper()
