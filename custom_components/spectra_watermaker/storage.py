@@ -40,6 +40,18 @@ class SpectraStorage:
         stored = await self._store.async_load()
         if stored:
             self._data = stored
+        # One-time migration: from May 2026 (78e9849) through 0.9.16 pressures were
+        # divided by 6.89 (wrongly assuming kPa), so baselines captured then are
+        # ~6.9x too low.
+        if self._data and "pressure_units" not in self._data:
+            # Only the prefilter baseline was captured on the divided scale; the
+            # strainer baseline (33) predates the conversion and is already PSI.
+            val = self._data.get("prefilter_baseline_feed_pressure")
+            if val is not None and val < 100:
+                self._data["prefilter_baseline_feed_pressure"] = round(val * 6.89476, 1)
+                _LOGGER.info("Migrated prefilter baseline to PSI: %s", self._data["prefilter_baseline_feed_pressure"])
+            self._data["pressure_units"] = "psi"
+            await self.async_save()
         _LOGGER.debug("Loaded storage data: %s", self._data)
 
     async def async_save(self) -> None:

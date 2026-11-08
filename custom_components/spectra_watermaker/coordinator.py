@@ -1048,6 +1048,15 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # RUNNING -> FLUSHING (normal stop)
         if old_state == WatermakerState.RUNNING and new_state == WatermakerState.FLUSHING:
             self._end_run_tracking()
+
+        # Entering FLUSHING — post-run flush, or a manual/auto flush from IDLE.
+        # Start tracking unless a flush is already in progress (FLUSHING<->PROMPT
+        # flicker); a start older than 30 min is a missed completion, so restart.
+        if new_state == WatermakerState.FLUSHING and (
+            old_state == WatermakerState.RUNNING
+            or self._flush_start_time == 0.0
+            or time.monotonic() - self._flush_start_time > 1800
+        ):
             self._flush_tds_samples = []
             self._flush_pressure_samples = []
             self._flush_flow_samples = []
@@ -1460,6 +1469,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._flush_flow_samples = []
         self._flush_power_samples = []
         self._fired_anomalies = set()
+        self._flush_start_time = 0.0
 
         # Start auto power-off timer
         if self._auto_off_minutes > 0:
