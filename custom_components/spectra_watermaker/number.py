@@ -61,6 +61,50 @@ class SpectraRunDuration(NumberEntity):
         )
 
 
+class SpectraFillTarget(NumberEntity):
+    """Default target % for fill-to-target runs."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "fill_target"
+    _attr_icon = "mdi:water-check"
+    _attr_native_min_value = 10
+    _attr_native_max_value = 100
+    _attr_native_step = 5
+    _attr_native_unit_of_measurement = "%"
+    _attr_mode = NumberMode.SLIDER
+
+    def __init__(self, coordinator: SpectraCoordinator) -> None:
+        self._coordinator = coordinator
+        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_fill_target"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.config_entry.entry_id)},
+            "name": "Watermaker",
+            "manufacturer": MANUFACTURER,
+            "model": coordinator.sensor_data.device or DEFAULT_MODEL,
+        }
+
+    @property
+    def native_value(self) -> float:
+        """Return the default fill target."""
+        return self._coordinator.fill_target
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the default fill target."""
+        self._coordinator.fill_target = value
+        self.async_write_ha_state()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._handle_coordinator_update)
+        )
+
+
 class SpectraTankFullThreshold(NumberEntity):
     """Number entity for tank full auto-stop threshold."""
 
@@ -119,5 +163,9 @@ async def async_setup_entry(
     # Only add tank threshold if tank sensors are configured
     if entry.data.get("tank_sensor_port") or entry.data.get("tank_sensor_stbd"):
         entities.append(SpectraTankFullThreshold(coordinator))
+
+    # Fill-to-target is only offered with a fill level sensor
+    if coordinator.has_fill_sensor:
+        entities.append(SpectraFillTarget(coordinator))
 
     async_add_entities(entities)

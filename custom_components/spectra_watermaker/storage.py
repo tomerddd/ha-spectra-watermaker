@@ -113,6 +113,15 @@ class SpectraStorage:
         self._data["run_duration"] = value
 
     @property
+    def fill_target(self) -> float | None:
+        """Persisted default fill-to-target percentage."""
+        return self._data.get("fill_target")
+
+    @fill_target.setter
+    def fill_target(self, value: float | None) -> None:
+        self._data["fill_target"] = value
+
+    @property
     def tank_full_threshold(self) -> float | None:
         """Persisted tank full auto-stop threshold percentage (None means use config default)."""
         return self._data.get("tank_full_threshold")

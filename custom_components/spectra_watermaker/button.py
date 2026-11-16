@@ -31,6 +31,12 @@ BUTTON_DESCRIPTIONS: tuple[SpectraButtonDescription, ...] = (
         press_fn=lambda c: c.async_start_watermaker(),
     ),
     SpectraButtonDescription(
+        key="fill_to_target",
+        translation_key="fill_to_target",
+        icon="mdi:water-plus",
+        press_fn=lambda c: c.async_start_watermaker(target_percent=c.fill_target),
+    ),
+    SpectraButtonDescription(
         key="stop",
         translation_key="stop",
         icon="mdi:stop",
@@ -99,7 +105,7 @@ class SpectraButton(ButtonEntity):
 
         if key in ("reset_prefilter", "reset_charcoal", "reset_strainer"):
             return True
-        if key == "start":
+        if key in ("start", "fill_to_target"):
             return state in (
                 WatermakerState.OFF,
                 WatermakerState.IDLE,
@@ -136,5 +142,6 @@ async def async_setup_entry(
     entities = [
         SpectraButton(coordinator, description)
         for description in BUTTON_DESCRIPTIONS
+        if description.key != "fill_to_target" or coordinator.has_fill_sensor
     ]
     async_add_entities(entities)

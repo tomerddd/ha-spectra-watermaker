@@ -24,6 +24,7 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
 - **Water destination toggle** — switch between tank fill and overboard
 - **Power management** — optional smart outlet integration to power on/off the watermaker, with automatic boot prompt dismissal
 - **Tank full auto-stop** — connect your tank level sensors (any source) and set a threshold; the integration stops the watermaker when tanks are full (30s debounce to handle sloshing)
+- **Fill to target %** — with a fill level sensor configured, run until the tank(s) reach a target instead of for a fixed time. The device timer is set to an estimate (liters to go ÷ recent L/h × 1.5, 0.5–5 h) as a safety cap; the stop is debounced 30 s with 2% hysteresis for noisy senders. Projection sensors (end level/ETA, a round milestone on the way) make progress markers easy to build in a dashboard
 ### Anomaly Detection
 - **Continuous sensor monitoring** during both running and flushing phases
 - **Model-specific thresholds** auto-detected from the device name (Newport 1000/700/400, Ventura, Catalina)
@@ -67,6 +68,31 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
    - **Power consumption sensor** — for secondary state detection (watts)
    - **Port/Starboard tank level sensors** — from any system (SignalK, Victron, etc.)
    - **Tank full threshold** — percentage at which to auto-stop (default: 98%)
+   - **Fill level sensor** — one sensor (%) for the tank(s) the watermaker fills, e.g. a template over your in-service tanks. Enables fill-to-target runs. Give it a `capacity_liters` attribute for a tighter run-time cap and for the ETA/projection sensors.
+
+Example fill level template (two 350 L tanks, each with an "in service" toggle):
+
+```yaml
+template:
+  - sensor:
+      - name: "Fresh Water Active Level"
+        unit_of_measurement: "%"
+        state: >-
+          {% set ns = namespace(l=0, c=0) %}
+          {% for side in ['port', 'stbd'] %}
+            {% if is_state('input_boolean.tank_' ~ side ~ '_active', 'on') %}
+              {% set ns.l = ns.l + states('sensor.tank_' ~ side ~ '_level') | float(0) * 3.5 %}
+              {% set ns.c = ns.c + 350 %}
+            {% endif %}
+          {% endfor %}
+          {{ (ns.l / ns.c * 100) | round(1) if ns.c else 0 }}
+        attributes:
+          capacity_liters: >-
+            {{ (350 if is_state('input_boolean.tank_port_active', 'on') else 0)
+             + (350 if is_state('input_boolean.tank_stbd_active', 'on') else 0) }}
+```
+
+Start a target run with `spectra_watermaker.start` and `target_percent: 90` (or `duration_hours` for a timed run — not both).
 
 ## Events
 
@@ -76,8 +102,10 @@ The integration fires `spectra_watermaker_event` events for all key lifecycle mo
 
 | Type | When | Key Data |
 |------|------|----------|
-| `run_started` | Watermaker begins producing | `duration_hours`, `tank_port_pct`, `tank_stbd_pct` |
-| `run_completed` | Run finishes (enters flush) | `duration_minutes`, `liters_produced`, `stop_reason`, tank levels before and after |
+| `run_started` | Watermaker begins producing | `duration_hours`, `target_percent` (None for timed runs), `fill_level_start_pct`, `tank_port_pct`, `tank_stbd_pct` |
+| `run_completed` | Run finishes (enters flush) | `duration_minutes`, `liters_produced`, `stop_reason`, `target_percent`, `fill_level_pct`, tank levels before and after |
+| `target_reached` | Fill level held at the target — stopping | `target_percent`, `fill_level_pct` |
+| `target_already_reached` | Fill-to-target start refused (already at target) | `target_percent`, `fill_level_pct` |
 | `run_error` | Fatal error stops run | `error_page`, `error_message`, `duration_minutes` |
 | `warning` | Non-fatal prompt auto-dismissed mid-run | `page`, `message` |
 | `anomaly` | Sensor value out of bounds | `metric`, `value`, `expected_min`, `expected_max`, `possible_causes`, `phase` |
@@ -242,6 +270,10 @@ Thresholds are auto-detected from the device model. The following table shows ke
 | `select.spectra_water_destination` | select | Toggle tank vs. overboard while running |
 | `number.spectra_run_duration` | number | Duration for next start (0.5–8.0 hours, default 2.0) |
 | `number.spectra_tank_full_threshold` | number | Auto-stop threshold (50–100%, default 98%) |
+| `button.spectra_fill_to_target` | button | Start a run to the fill target (only with a fill level sensor) |
+| `number.spectra_fill_target` | number | Default fill target (10–100%, default 90%; capped at the tank-full threshold) |
+| `sensor.spectra_fill_end_level` / `_fill_end_eta` | sensor | Target (target runs) or projected level at timer end (timed runs), and minutes to get there |
+| `sensor.spectra_fill_milestone_level` / `_fill_milestone_eta` | sensor | A round level about halfway, fixed at run start; unknown once reached |
 
 ## How It Works
 
@@ -286,7 +318,7 @@ The integration stores the last 50 runs in `.storage/spectra_watermaker_history`
 - Min/max/avg TDS during fill
 - Average feed pressure and water temperature
 - Time from start to tank fill
-- Stop reason (manual, timer, tank_full, error)
+- Stop reason (manual, timer, tank_full, target_reached, error)
 
 Access via the `spectra_watermaker.get_run_history` service call for dashboards or automations.
 

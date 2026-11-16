@@ -10,6 +10,7 @@ CONF_TANK_SENSOR_PORT = "tank_sensor_port"
 CONF_TANK_SENSOR_STBD = "tank_sensor_stbd"
 CONF_TANK_FULL_THRESHOLD = "tank_full_threshold"
 CONF_AUTO_OFF_DELAY = "auto_off_delay"
+CONF_FILL_LEVEL_SENSOR = "fill_level_sensor"
 
 # Defaults
 DEFAULT_WS_UI_PORT = 9000
@@ -19,6 +20,18 @@ DEFAULT_TANK_FULL_DEBOUNCE_SEC = 30
 DEFAULT_COMMAND_DELAY_MS = 1500
 DEFAULT_AUTO_OFF_MINUTES = 5
 DEFAULT_RUN_DURATION_HOURS = 2.0
+
+# Fill-to-target runs
+DEFAULT_FILL_TARGET = 90
+FILL_TARGET_MIN = 10
+FILL_TARGET_DEBOUNCE_SEC = 30
+FILL_TARGET_HYSTERESIS = 2.0  # % below target before a pending stop is cancelled (noisy senders)
+FILL_ESTIMATE_MARGIN = 1.5  # device run time = estimated hours x margin (safety cap)
+FILL_MIN_HOURS = 0.5
+FILL_MAX_HOURS = 5.0  # longest duration the start service/device path accepts
+FILL_CAPACITY_ATTR = "capacity_liters"  # optional attribute on the fill level sensor
+FILL_RATE_HISTORY_RUNS = 5  # recent runs used to estimate L/h
+FILL_LEVEL_EMA_ALPHA = 0.1  # smoothing of the (noisy) fill sensor for projections
 
 # WebSocket
 WS_SUBPROTOCOL = "dumb-increment-protocol"
@@ -40,6 +53,7 @@ STOP_REASON_TANK_FULL = "tank_full"
 STOP_REASON_ERROR = "error"
 STOP_REASON_POWER_LOSS = "power_loss"
 STOP_REASON_DEVICE_REBOOT = "device_reboot"
+STOP_REASON_TARGET_REACHED = "target_reached"
 
 # Spectra page IDs (running)
 PAGES_RUNNING = {"5", "6", "30", "31", "32"}

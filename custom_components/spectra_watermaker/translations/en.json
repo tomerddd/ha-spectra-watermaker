@@ -19,14 +19,16 @@
           "power_sensor": "Power consumption sensor",
           "tank_sensor_port": "Port tank level sensor",
           "tank_sensor_stbd": "Starboard tank level sensor",
-          "tank_full_threshold": "Tank full auto-stop threshold"
+          "tank_full_threshold": "Tank full auto-stop threshold",
+          "fill_level_sensor": "Fill level sensor (for fill-to-target runs)"
         },
         "data_description": {
           "power_switch": "Switch entity that controls power to the watermaker (e.g., a smart outlet)",
           "power_sensor": "Sensor that measures the watermaker outlet's power draw in watts",
           "tank_sensor_port": "Sensor providing port tank level as a percentage",
           "tank_sensor_stbd": "Sensor providing starboard tank level as a percentage",
-          "tank_full_threshold": "Stop the watermaker when any tank reaches this level for 30 seconds"
+          "tank_full_threshold": "Stop the watermaker when any tank reaches this level for 30 seconds",
+          "fill_level_sensor": "Optional. One sensor giving the level (%) of the tank(s) the watermaker fills, e.g. a template over the in-service tanks. Enables fill-to-target runs. Add a capacity_liters attribute for a tighter run-time safety cap."
         }
       }
     },
@@ -47,7 +49,8 @@
           "tank_sensor_port": "Port tank level sensor",
           "tank_sensor_stbd": "Starboard tank level sensor",
           "tank_full_threshold": "Tank full auto-stop threshold",
-          "auto_off_delay": "Auto power-off delay"
+          "auto_off_delay": "Auto power-off delay",
+          "fill_level_sensor": "Fill level sensor (for fill-to-target runs)"
         },
         "data_description": {
           "power_switch": "Switch entity that controls power to the watermaker (e.g., a smart outlet)",
@@ -55,7 +58,8 @@
           "tank_sensor_port": "Sensor providing port tank level as a percentage",
           "tank_sensor_stbd": "Sensor providing starboard tank level as a percentage",
           "tank_full_threshold": "Stop the watermaker when any tank reaches this level for 30 seconds",
-          "auto_off_delay": "Minutes to wait after idle before turning off the outlet. Set to 0 to disable."
+          "auto_off_delay": "Minutes to wait after idle before turning off the outlet. Set to 0 to disable.",
+          "fill_level_sensor": "Optional. One sensor giving the level (%) of the tank(s) the watermaker fills, e.g. a template over the in-service tanks. Enables fill-to-target runs. Add a capacity_liters attribute for a tighter run-time safety cap."
         }
       }
     }
@@ -184,6 +188,18 @@
       },
       "strainer_health": {
         "name": "Raw strainer health"
+      },
+      "fill_end_level": {
+        "name": "Fill end level"
+      },
+      "fill_end_eta": {
+        "name": "Fill end ETA"
+      },
+      "fill_milestone_level": {
+        "name": "Fill milestone level"
+      },
+      "fill_milestone_eta": {
+        "name": "Fill milestone ETA"
       }
     },
     "binary_sensor": {
@@ -215,6 +231,9 @@
       },
       "reset_strainer": {
         "name": "Reset raw strainer"
+      },
+      "fill_to_target": {
+        "name": "Fill to target"
       }
     },
     "switch": {
@@ -233,6 +252,9 @@
       },
       "tank_full_threshold": {
         "name": "Tank full threshold"
+      },
+      "fill_target": {
+        "name": "Fill target"
       }
     }
   },
@@ -244,6 +266,10 @@
         "duration_hours": {
           "name": "Duration",
           "description": "Run duration in hours (0.5-8.0). Uses the configured default if omitted."
+        },
+        "target_percent": {
+          "name": "Fill target",
+          "description": "Run until the fill level sensor reaches this % (needs a fill level sensor). Do not combine with duration_hours."
         }
       }
     },

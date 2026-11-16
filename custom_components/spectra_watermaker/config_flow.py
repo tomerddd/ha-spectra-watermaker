@@ -21,6 +21,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_AUTO_OFF_DELAY,
+    CONF_FILL_LEVEL_SENSOR,
     CONF_HOST,
     CONF_POWER_SENSOR,
     CONF_POWER_SWITCH,
@@ -112,6 +113,7 @@ class SpectraWatermakerConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_POWER_SENSOR: user_input.get(CONF_POWER_SENSOR),
                 CONF_TANK_SENSOR_PORT: user_input.get(CONF_TANK_SENSOR_PORT),
                 CONF_TANK_SENSOR_STBD: user_input.get(CONF_TANK_SENSOR_STBD),
+                CONF_FILL_LEVEL_SENSOR: user_input.get(CONF_FILL_LEVEL_SENSOR),
                 CONF_TANK_FULL_THRESHOLD: user_input.get(
                     CONF_TANK_FULL_THRESHOLD, DEFAULT_TANK_FULL_THRESHOLD
                 ),
@@ -139,6 +141,9 @@ class SpectraWatermakerConfigFlow(ConfigFlow, domain=DOMAIN):
                         selector.EntitySelectorConfig(domain="sensor"),
                     ),
                     vol.Optional(CONF_TANK_SENSOR_STBD): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="sensor"),
+                    ),
+                    vol.Optional(CONF_FILL_LEVEL_SENSOR): selector.EntitySelector(
                         selector.EntitySelectorConfig(domain="sensor"),
                     ),
                     vol.Optional(
@@ -176,6 +181,7 @@ class SpectraWatermakerOptionsFlow(OptionsFlow):
             new_data[CONF_POWER_SENSOR] = user_input.get(CONF_POWER_SENSOR)
             new_data[CONF_TANK_SENSOR_PORT] = user_input.get(CONF_TANK_SENSOR_PORT)
             new_data[CONF_TANK_SENSOR_STBD] = user_input.get(CONF_TANK_SENSOR_STBD)
+            new_data[CONF_FILL_LEVEL_SENSOR] = user_input.get(CONF_FILL_LEVEL_SENSOR)
             new_data[CONF_TANK_FULL_THRESHOLD] = user_input.get(
                 CONF_TANK_FULL_THRESHOLD, DEFAULT_TANK_FULL_THRESHOLD
             )
@@ -223,6 +229,12 @@ class SpectraWatermakerOptionsFlow(OptionsFlow):
                     vol.Optional(
                         CONF_TANK_SENSOR_STBD,
                         description={"suggested_value": current_data.get(CONF_TANK_SENSOR_STBD)},
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="sensor"),
+                    ),
+                    vol.Optional(
+                        CONF_FILL_LEVEL_SENSOR,
+                        description={"suggested_value": current_data.get(CONF_FILL_LEVEL_SENSOR)},
                     ): selector.EntitySelector(
                         selector.EntitySelectorConfig(domain="sensor"),
                     ),

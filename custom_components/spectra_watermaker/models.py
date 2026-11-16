@@ -58,6 +58,7 @@ class StopReason(enum.StrEnum):
     ERROR = "error"
     POWER_LOSS = "power_loss"
     DEVICE_REBOOT = "device_reboot"
+    TARGET_REACHED = "target_reached"
 
 
 @dataclass

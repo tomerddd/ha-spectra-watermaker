@@ -4,7 +4,7 @@ start:
   fields:
     duration_hours:
       name: Duration
-      description: Run duration in hours (0.25-5.0). Uses the configured default if omitted.
+      description: Run duration in hours (0.25-5.0). Uses the configured default if omitted. Do not combine with target_percent.
       required: false
       selector:
         number:
@@ -12,6 +12,17 @@ start:
           max: 5.0
           step: 0.25
           unit_of_measurement: "h"
+          mode: slider
+    target_percent:
+      name: Fill target
+      description: Run until the fill level sensor reaches this % (needs a fill level sensor in the options). Capped at the tank-full threshold. The device run time is set to an estimate as a safety cap.
+      required: false
+      selector:
+        number:
+          min: 10
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
           mode: slider
 
 stop:

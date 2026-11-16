@@ -14,6 +14,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    PERCENTAGE,
     EntityCategory,
     UnitOfEnergy,
     UnitOfPressure,
@@ -64,6 +65,14 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
         translation_key="state",
         icon="mdi:water-pump",
         value_fn=lambda c: c.state.value,
+        attr_fn=lambda c: {
+            "run_mode": (
+                None if c.state.value not in ("starting", "running")
+                else "target" if c.active_fill_target is not None else "time"
+            ),
+            "fill_target": c.active_fill_target,
+            "fill_level": c.fill_level,
+        },
     ),
     # ── Real-time sensors (port 9001) ──
     SpectraSensorDescription(
@@ -427,6 +436,42 @@ SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
 )
 
 
+# Fill projections (only created when a fill level sensor is configured).
+# Values are None (unknown) unless a run is filling.
+FILL_SENSOR_DESCRIPTIONS: tuple[SpectraSensorDescription, ...] = (
+    SpectraSensorDescription(
+        key="fill_end_level",
+        translation_key="fill_end_level",
+        native_unit_of_measurement=PERCENTAGE,
+        icon="mdi:flag-checkered",
+        value_fn=lambda c: c.fill_end_level,
+    ),
+    SpectraSensorDescription(
+        key="fill_end_eta",
+        translation_key="fill_end_eta",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        device_class=SensorDeviceClass.DURATION,
+        icon="mdi:timer-sand",
+        value_fn=lambda c: c.fill_end_eta,
+    ),
+    SpectraSensorDescription(
+        key="fill_milestone_level",
+        translation_key="fill_milestone_level",
+        native_unit_of_measurement=PERCENTAGE,
+        icon="mdi:flag-outline",
+        value_fn=lambda c: c.fill_milestone_level,
+    ),
+    SpectraSensorDescription(
+        key="fill_milestone_eta",
+        translation_key="fill_milestone_eta",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        device_class=SensorDeviceClass.DURATION,
+        icon="mdi:timer-sand",
+        value_fn=lambda c: c.fill_milestone_eta,
+    ),
+)
+
+
 class SpectraSensor(SensorEntity):
     """Sensor entity for Spectra Watermaker."""
 
@@ -517,4 +562,9 @@ async def async_setup_entry(
         SpectraSensor(coordinator, description)
         for description in SENSOR_DESCRIPTIONS
     ]
+    if coordinator.has_fill_sensor:
+        entities += [
+            SpectraSensor(coordinator, description)
+            for description in FILL_SENSOR_DESCRIPTIONS
+        ]
     async_add_entities(entities)

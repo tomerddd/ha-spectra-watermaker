@@ -7,6 +7,7 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
@@ -21,8 +22,11 @@ SERVICE_GET_RUN_HISTORY = "get_run_history"
 
 SERVICE_START_SCHEMA = vol.Schema(
     {
-        vol.Optional("duration_hours"): vol.All(
+        vol.Exclusive("duration_hours", "run_mode"): vol.All(
             vol.Coerce(float), vol.Range(min=0.25, max=5.0)
+        ),
+        vol.Exclusive("target_percent", "run_mode"): vol.All(
+            vol.Coerce(float), vol.Range(min=10, max=100)
         ),
     }
 )
@@ -58,8 +62,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         if not coordinator:
             _LOGGER.error("No Spectra Watermaker coordinator found")
             return
+        target = call.data.get("target_percent")
+        if target is not None and not coordinator.has_fill_sensor:
+            raise ServiceValidationError(
+                "Fill-to-target needs a fill level sensor in the integration options"
+            )
         duration = call.data.get("duration_hours")
-        await coordinator.async_start_watermaker(duration)
+        await coordinator.async_start_watermaker(duration, target_percent=target)
 
     async def handle_stop(call: ServiceCall) -> None:
         """Handle the stop service call."""

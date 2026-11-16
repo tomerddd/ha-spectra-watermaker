@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from .const import (
     ANOMALY_STARTUP_SKIP_SEC,
     ANOMALY_FLUSH_SKIP_SEC,
     CONF_AUTO_OFF_DELAY,
+    CONF_FILL_LEVEL_SENSOR,
     CONF_HOST,
     CONF_POWER_SENSOR,
     CONF_POWER_SWITCH,
@@ -26,6 +28,7 @@ from .const import (
     CONF_TANK_SENSOR_PORT,
     CONF_TANK_SENSOR_STBD,
     DEFAULT_AUTO_OFF_MINUTES,
+    DEFAULT_FILL_TARGET,
     DEFAULT_RUN_DURATION_HOURS,
     DEFAULT_TANK_FULL_DEBOUNCE_SEC,
     DEFAULT_TANK_FULL_THRESHOLD,
@@ -34,6 +37,15 @@ from .const import (
     DOMAIN,
     EMA_ALPHA,
     EVENT_SPECTRA_WATERMAKER,
+    FILL_CAPACITY_ATTR,
+    FILL_ESTIMATE_MARGIN,
+    FILL_MAX_HOURS,
+    FILL_MIN_HOURS,
+    FILL_LEVEL_EMA_ALPHA,
+    FILL_RATE_HISTORY_RUNS,
+    FILL_TARGET_DEBOUNCE_SEC,
+    FILL_TARGET_HYSTERESIS,
+    FILL_TARGET_MIN,
     FLUSH_END_TDS_CHECK,
     PAGES_PROMPT,
     PPM_IGNORE_STARTUP_SEC,
@@ -84,6 +96,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._power_sensor: str | None = entry.data.get(CONF_POWER_SENSOR)
         self._tank_port: str | None = entry.data.get(CONF_TANK_SENSOR_PORT)
         self._tank_stbd: str | None = entry.data.get(CONF_TANK_SENSOR_STBD)
+        # Single sensor (e.g. an HA template over the in-service tanks) used for
+        # fill-to-target runs. Target mode is only offered when this is set.
+        self._fill_sensor: str | None = entry.data.get(CONF_FILL_LEVEL_SENSOR)
 
         # Options (with defaults)
         self._tank_full_threshold: float = entry.data.get(
@@ -137,12 +152,23 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Run duration setting
         self._run_duration: float = DEFAULT_RUN_DURATION_HOURS
 
+        # Fill-to-target: default target (number entity) and the target of the
+        # current run (None = timed run).
+        self._fill_target: float = float(DEFAULT_FILL_TARGET)
+        self._active_fill_target: float | None = None
+        self._fill_target_timer: asyncio.TimerHandle | None = None
+        # Fill projections (dashboard milestones): smoothed level and a round
+        # milestone fixed at run start.
+        self._fill_level_ema: float | None = None
+        self._fill_milestone: float | None = None
+
         # Auto power-off
         self._auto_off_timer: asyncio.TimerHandle | None = None
         self._integration_powered_on: bool = False
 
         # Tank full debounce
         self._tank_full_timer: asyncio.TimerHandle | None = None
+        self._tanks_over_full: set[str] = set()
         self._tank_unsub: list[CALLBACK_TYPE] = []
         self._power_unsub: CALLBACK_TYPE | None = None
 
@@ -264,6 +290,155 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass.async_create_task(
             self._storage.async_save(), name="spectra_save_run_duration"
         )
+
+    @property
+    def has_fill_sensor(self) -> bool:
+        """Whether fill-to-target runs are available."""
+        return bool(self._fill_sensor)
+
+    @property
+    def fill_level(self) -> float | None:
+        """Current reading of the fill level sensor (%)."""
+        return self._get_tank_level(self._fill_sensor)
+
+    @property
+    def fill_target(self) -> float:
+        """Default fill-to-target percentage."""
+        return self._fill_target
+
+    @fill_target.setter
+    def fill_target(self, value: float) -> None:
+        """Set default fill target and persist to storage."""
+        self._fill_target = max(float(FILL_TARGET_MIN), min(100.0, value))
+        self._storage.fill_target = self._fill_target
+        self.hass.async_create_task(
+            self._storage.async_save(), name="spectra_save_fill_target"
+        )
+
+    @property
+    def fill_capacity(self) -> float | None:
+        """Capacity (L) behind the fill sensor, from its capacity_liters attribute."""
+        state = self.hass.states.get(self._fill_sensor) if self._fill_sensor else None
+        if state is None:
+            return None
+        try:
+            cap = float(state.attributes.get(FILL_CAPACITY_ATTR))
+        except (TypeError, ValueError):
+            return None
+        return cap if cap > 0 else None
+
+    def _fill_rate_pct_h(self) -> float | None:
+        """Fill rate in %/h: this run's average once established, else history."""
+        cap = self.fill_capacity
+        if not cap:
+            return None
+        rate = None
+        if self._run_start_monotonic:
+            elapsed_h = (time.monotonic() - self._run_start_monotonic) / 3600
+            if elapsed_h >= 10 / 60 and self._run_liters > 5:
+                rate = self._run_liters / elapsed_h
+        if rate is None:
+            rate = self._recent_production_lph()
+        return rate / cap * 100 if rate > 0 else None
+
+    def _remaining_run_minutes(self) -> float | None:
+        """Minutes left on the device timer (parsed from the UI string)."""
+        text = self._remaining_time or ""
+        hours = re.search(r"(\d+)\s*h", text)
+        mins = re.search(r"(\d+)\s*m", text)
+        if hours or mins:
+            return (int(hours.group(1)) if hours else 0) * 60 + (int(mins.group(1)) if mins else 0)
+        if self._run_start_monotonic:
+            elapsed = (time.monotonic() - self._run_start_monotonic) / 60
+            return max(0.0, self._requested_duration * 60 - elapsed)
+        return None
+
+    @property
+    def _filling_projection_ready(self) -> bool:
+        return (
+            self._state == WatermakerState.RUNNING
+            and self._fill_sensor is not None
+            and self._fill_level_ema is not None
+        )
+
+    @property
+    def fill_end_level(self) -> float | None:
+        """Target (target mode) or projected level at timer end (time mode)."""
+        if not self._filling_projection_ready:
+            return None
+        if self._active_fill_target is not None:
+            return self._active_fill_target
+        rate = self._fill_rate_pct_h()
+        remaining = self._remaining_run_minutes()
+        if rate is None or remaining is None:
+            return None
+        return round(min(100.0, self._fill_level_ema + rate * remaining / 60), 1)
+
+    @property
+    def fill_end_eta(self) -> float | None:
+        """Minutes until the end level is reached."""
+        if not self._filling_projection_ready:
+            return None
+        if self._active_fill_target is None:
+            remaining = self._remaining_run_minutes()
+            return round(remaining) if remaining is not None else None
+        return self._eta_minutes(self._active_fill_target)
+
+    @property
+    def fill_milestone_level(self) -> float | None:
+        """Round milestone on the way (None once reached or if none fits)."""
+        if not self._filling_projection_ready or self._fill_milestone is None:
+            return None
+        if self._fill_level_ema >= self._fill_milestone:
+            self._fill_milestone = None
+            return None
+        return self._fill_milestone
+
+    @property
+    def fill_milestone_eta(self) -> float | None:
+        """Minutes until the milestone is reached."""
+        level = self.fill_milestone_level
+        return self._eta_minutes(level) if level is not None else None
+
+    def _eta_minutes(self, level: float) -> float | None:
+        rate = self._fill_rate_pct_h()
+        if rate is None or self._fill_level_ema is None:
+            return None
+        return round(max(0.0, (level - self._fill_level_ema) / rate * 60))
+
+    @staticmethod
+    def _nice_milestone(start: float, end: float) -> float | None:
+        """A round level roughly halfway from start to end (multiples of 10, then 5)."""
+        mid = (start + end) / 2
+        for step, gap in ((10, 5), (5, 3)):
+            candidates = [
+                v for v in range(step, 100, step) if start + gap < v < end - gap
+            ]
+            if candidates:
+                return float(min(candidates, key=lambda v: abs(v - mid)))
+        return None
+
+    def _init_fill_projection(self) -> None:
+        """Seed smoothing and fix the milestone at run start."""
+        self._fill_level_ema = self._get_tank_level(self._fill_sensor)
+        self._fill_milestone = None
+        if self._fill_level_ema is None:
+            return
+        if self._active_fill_target is not None:
+            end = self._active_fill_target
+        else:
+            rate = self._fill_rate_pct_h()
+            end = (
+                min(100.0, self._fill_level_ema + rate * self._requested_duration)
+                if rate is not None else None
+            )
+        if end is not None:
+            self._fill_milestone = self._nice_milestone(self._fill_level_ema, end)
+
+    @property
+    def active_fill_target(self) -> float | None:
+        """Target % of the current run, or None for a timed run."""
+        return self._active_fill_target
 
     @property
     def tank_full_threshold(self) -> float:
@@ -445,6 +620,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._run_duration = self._storage.run_duration
         if self._storage.tank_full_threshold is not None:
             self._tank_full_threshold = self._storage.tank_full_threshold
+        if self._storage.fill_target is not None:
+            self._fill_target = self._storage.fill_target
 
         # Determine initial state based on power switch
         if self._power_switch:
@@ -477,6 +654,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._stop_time_polling()
         self._cancel_auto_off_timer()
         self._cancel_tank_full_timer()
+        self._cancel_fill_target_timer()
 
         for unsub in self._tank_unsub:
             unsub()
@@ -498,10 +676,16 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # Commands
     # ──────────────────────────────────────────────
 
-    async def async_start_watermaker(self, duration_hours: float | None = None) -> bool:
+    async def async_start_watermaker(
+        self,
+        duration_hours: float | None = None,
+        target_percent: float | None = None,
+    ) -> bool:
         """Start the watermaker with full sequence.
 
         Handles power-on, boot prompts, duration setting, and start.
+        With target_percent, runs until the fill level sensor reaches the target;
+        the device run time is then an estimate used only as a safety cap.
         """
         if self._state == WatermakerState.RUNNING:
             _LOGGER.warning("Watermaker is already running")
@@ -524,6 +708,29 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._state,
                 )
                 self._state = WatermakerState.OFF
+
+        fill_target: float | None = None
+        if target_percent is not None:
+            if not self._fill_sensor:
+                _LOGGER.error("Fill-to-target requested but no fill level sensor is configured")
+                return False
+            level = self._get_tank_level(self._fill_sensor)
+            if level is None:
+                _LOGGER.error("Fill level sensor %s has no valid reading", self._fill_sensor)
+                return False
+            fill_target = min(float(target_percent), self._tank_full_threshold)
+            if level >= fill_target:
+                _LOGGER.warning(
+                    "Fill level %.1f%% already at/above target %.1f%% — not starting",
+                    level, fill_target,
+                )
+                self._fire_event(
+                    "target_already_reached",
+                    target_percent=fill_target,
+                    fill_level_pct=level,
+                )
+                return False
+            duration_hours = self._estimate_fill_hours(level, fill_target)
 
         duration = duration_hours if duration_hours is not None else self._run_duration
         self._requested_duration = duration
@@ -577,12 +784,16 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return False
 
         self._state = WatermakerState.STARTING
+        # Set before the start sequence: the RUNNING transition (and the
+        # run_started event) can fire while protocol.start() is still waiting.
+        self._active_fill_target = fill_target
         self.async_set_updated_data({})
 
         success = await self._protocol.start(duration)
         if not success:
             self._state = WatermakerState.IDLE if self._ui_connected else WatermakerState.ERROR
             self._integration_started = False
+            self._active_fill_target = None
             self.async_set_updated_data({})
             return False
 
@@ -843,6 +1054,49 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except (ValueError, TypeError):
                 pass
         return None
+
+    def _recent_production_lph(self) -> float:
+        """Average liters/hour delivered to the tank over recent real runs."""
+        rates = [
+            r.liters_produced / (r.duration_minutes / 60)
+            for r in self._history.runs
+            if str(r.stop_reason) != StopReason.ERROR
+            and r.duration_minutes >= 20
+            and r.liters_produced > 0
+        ][:FILL_RATE_HISTORY_RUNS]
+        if rates:
+            return sum(rates) / len(rates)
+        return self._ensure_model_profile()["production_gph"] * 3.785
+
+    def _estimate_fill_hours(self, level: float, target: float) -> float:
+        """Device run time for a fill-to-target run (safety cap, not the stop).
+
+        Needs a capacity_liters attribute on the fill sensor; without it the
+        longest duration is used and the target stop does the work.
+        """
+        capacity: float | None = None
+        state = self.hass.states.get(self._fill_sensor) if self._fill_sensor else None
+        if state is not None:
+            try:
+                capacity = float(state.attributes.get(FILL_CAPACITY_ATTR))
+            except (TypeError, ValueError):
+                capacity = None
+        if not capacity or capacity <= 0:
+            _LOGGER.info(
+                "Fill sensor has no %s attribute — using %.2f h cap",
+                FILL_CAPACITY_ATTR, FILL_MAX_HOURS,
+            )
+            return FILL_MAX_HOURS
+
+        rate = self._recent_production_lph()
+        liters = (target - level) / 100 * capacity
+        hours = math.ceil(liters / rate * FILL_ESTIMATE_MARGIN * 4) / 4
+        hours = max(FILL_MIN_HOURS, min(FILL_MAX_HOURS, hours))
+        _LOGGER.info(
+            "Fill %.1f%% -> %.1f%%: %.0f L at %.0f L/h, x%.1f margin = %.2f h cap",
+            level, target, liters, rate, FILL_ESTIMATE_MARGIN, hours,
+        )
+        return hours
 
     def _fire_event(self, event_type: str, **data: Any) -> None:
         """Fire a spectra_watermaker_event with tank levels included."""
@@ -1149,9 +1403,13 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._tank_port_start = self._get_tank_level(self._tank_port)
         self._tank_stbd_start = self._get_tank_level(self._tank_stbd)
 
+        self._cancel_fill_target_timer()
+        self._init_fill_projection()
         self._fire_event(
             "run_started",
             duration_hours=self._requested_duration,
+            target_percent=self._active_fill_target,
+            fill_level_start_pct=self._get_tank_level(self._fill_sensor),
             tank_port_start_pct=self._tank_port_start,
             tank_stbd_start_pct=self._tank_stbd_start,
         )
@@ -1268,12 +1526,18 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 duration_minutes=round(duration_minutes, 1),
                 liters_produced=round(self._run_liters, 1),
                 stop_reason=str(self._stop_reason),
+                target_percent=self._active_fill_target,
+                fill_level_pct=self._get_tank_level(self._fill_sensor),
                 tank_port_start_pct=self._tank_port_start,
                 tank_stbd_start_pct=self._tank_stbd_start,
             )
 
         self._run_start_time = None
         self._integration_started = False
+        self._active_fill_target = None
+        self._cancel_fill_target_timer()
+        self._fill_level_ema = None
+        self._fill_milestone = None
 
     def _read_power_sensor(self) -> float | None:
         """Read current power draw from configured power sensor entity."""
@@ -1534,6 +1798,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entities.append(self._tank_port)
         if self._tank_stbd:
             entities.append(self._tank_stbd)
+        if self._fill_sensor and self._fill_sensor not in entities:
+            entities.append(self._fill_sensor)
 
         if not entities:
             return
@@ -1597,9 +1863,11 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @callback
     def _on_tank_state_change(self, event: Event) -> None:
-        """Handle tank level state changes for auto-stop."""
+        """Handle tank / fill level changes: tank-full safety stop and fill target."""
         if self._state != WatermakerState.RUNNING:
             self._cancel_tank_full_timer()
+            self._cancel_fill_target_timer()
+            self._tanks_over_full.clear()
             return
 
         new_state = event.data.get("new_state")
@@ -1611,11 +1879,24 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except (ValueError, TypeError):
             return
 
+        entity_id = new_state.entity_id
+        if entity_id == self._fill_sensor:
+            self._fill_level_ema = (
+                level if self._fill_level_ema is None
+                else self._fill_level_ema + FILL_LEVEL_EMA_ALPHA * (level - self._fill_level_ema)
+            )
+            self._check_fill_target(level)
+        if entity_id not in (self._tank_port, self._tank_stbd):
+            return
+
+        # Track per tank: a below-threshold reading from the OTHER tank must not
+        # cancel the debounce of a tank that is still full.
         if level >= self._tank_full_threshold:
+            self._tanks_over_full.add(entity_id)
             if self._tank_full_timer is None:
                 _LOGGER.debug(
                     "Tank %s at %.1f%% (>= %.1f%%), starting %ds debounce",
-                    new_state.entity_id,
+                    entity_id,
                     level,
                     self._tank_full_threshold,
                     DEFAULT_TANK_FULL_DEBOUNCE_SEC,
@@ -1625,7 +1906,47 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._tank_full_fire,
                 )
         else:
-            self._cancel_tank_full_timer()
+            self._tanks_over_full.discard(entity_id)
+            if not self._tanks_over_full:
+                self._cancel_tank_full_timer()
+
+    def _check_fill_target(self, level: float) -> None:
+        """Debounce the fill-target stop. Level sensors are noisy, so a pending
+        stop is only cancelled when the level falls clearly below the target."""
+        target = self._active_fill_target
+        if target is None:
+            return
+        if level >= target:
+            if self._fill_target_timer is None:
+                _LOGGER.info(
+                    "Fill level %.1f%% reached target %.1f%% — stopping in %ds unless it drops",
+                    level, target, FILL_TARGET_DEBOUNCE_SEC,
+                )
+                self._fill_target_timer = self.hass.loop.call_later(
+                    FILL_TARGET_DEBOUNCE_SEC, self._fill_target_fire
+                )
+        elif level < target - FILL_TARGET_HYSTERESIS:
+            self._cancel_fill_target_timer()
+
+    def _fill_target_fire(self) -> None:
+        """Stop the run once the fill target held through the debounce."""
+        self._fill_target_timer = None
+        target = self._active_fill_target
+        if self._state != WatermakerState.RUNNING or target is None:
+            return
+        level = self._get_tank_level(self._fill_sensor)
+        _LOGGER.info("Fill target %.1f%% reached (level %s%%) — stopping", target, level)
+        self._fire_event("target_reached", target_percent=target, fill_level_pct=level)
+        self.hass.async_create_task(
+            self.async_stop_watermaker(StopReason.TARGET_REACHED),
+            name="spectra_fill_target_stop",
+        )
+
+    def _cancel_fill_target_timer(self) -> None:
+        """Cancel the fill target debounce timer."""
+        if self._fill_target_timer:
+            self._fill_target_timer.cancel()
+            self._fill_target_timer = None
 
     def _tank_full_fire(self) -> None:
         """Fire tank-full auto-stop after debounce."""
