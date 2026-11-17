@@ -42,6 +42,8 @@ from .const import (
     FILL_MAX_HOURS,
     FILL_MIN_HOURS,
     FILL_LEVEL_EMA_ALPHA,
+    STARTUP_RETRY_DELAY_SEC,
+    STARTUP_RETRY_MAX_MINUTES,
     FILL_RATE_HISTORY_RUNS,
     FILL_TARGET_DEBOUNCE_SEC,
     FILL_TARGET_HYSTERESIS,
@@ -176,6 +178,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._model_profile: dict | None = None
         self._fired_anomalies: set[str] = set()
         self._requested_duration: float = DEFAULT_RUN_DURATION_HOURS
+        # One-shot retry of a start-up salinity abort (see STARTUP_RETRY_*)
+        self._last_start_args: dict[str, float | None] | None = None
+        self._startup_retry_used = False
         self._tank_port_start: float | None = None
         self._tank_stbd_start: float | None = None
         self._flush_tds_samples: list[float] = []
@@ -680,6 +685,8 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self,
         duration_hours: float | None = None,
         target_percent: float | None = None,
+        *,
+        _retry: bool = False,
     ) -> bool:
         """Start the watermaker with full sequence.
 
@@ -708,6 +715,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._state,
                 )
                 self._state = WatermakerState.OFF
+
+        # Remember what was asked for, so a start-up salinity abort can retry it
+        self._last_start_args = {"duration_hours": duration_hours, "target_percent": target_percent}
+        self._startup_retry_used = _retry
 
         fill_target: float | None = None
         if target_percent is not None:
@@ -1227,6 +1238,19 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._run_start_time:
             duration_minutes = (datetime.now(timezone.utc) - self._run_start_time).total_seconds() / 60
 
+        if self._integration_started:
+            retry_args = self._last_start_args
+            retry_used = self._startup_retry_used
+        else:
+            # Started at the unit's own panel: rerun with the device's duration
+            retry_args = {"duration_hours": self._requested_duration, "target_percent": None}
+            retry_used = False
+        will_retry = (
+            not retry_used
+            and duration_minutes <= STARTUP_RETRY_MAX_MINUTES
+            and "salinity" in error_msg.lower()
+        )
+
         self._end_run_tracking()
 
         self._fire_event(
@@ -1234,16 +1258,24 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             duration_minutes=round(duration_minutes, 1),
             error_page=ui.page,
             error_message=error_msg,
+            will_retry=will_retry,
         )
 
         # Dismiss prompt and stop post-error flush to return to idle
         self.hass.async_create_task(
-            self._dismiss_error_and_stop_flush(ui.page),
+            self._dismiss_error_and_stop_flush(
+                ui.page, retry_args=(retry_args or {}) if will_retry else None
+            ),
             name="spectra_dismiss_error",
         )
 
-    async def _dismiss_error_and_stop_flush(self, page: str) -> None:
-        """Dismiss error prompt, wait for flush, stop it, return to idle."""
+    async def _dismiss_error_and_stop_flush(
+        self, page: str, retry_args: dict[str, float | None] | None = None
+    ) -> None:
+        """Dismiss error prompt, wait for flush, stop it, return to idle.
+
+        With retry_args, restart once from idle (start-up salinity abort).
+        """
         try:
             # Dismiss the error prompt
             await asyncio.sleep(1.0)
@@ -1270,6 +1302,18 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await asyncio.sleep(2.0)
 
             _LOGGER.info("Error recovery complete, state: %s", self._state)
+
+            if retry_args is not None:
+                await asyncio.sleep(STARTUP_RETRY_DELAY_SEC)
+                if self._state != WatermakerState.IDLE:
+                    _LOGGER.warning("Start-up retry skipped: state is %s, not idle", self._state)
+                    return
+                _LOGGER.info("Retrying start after start-up salinity abort: %s", retry_args)
+                await self.async_start_watermaker(
+                    retry_args.get("duration_hours"),
+                    retry_args.get("target_percent"),
+                    _retry=True,
+                )
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Error during dismiss/stop sequence")
 

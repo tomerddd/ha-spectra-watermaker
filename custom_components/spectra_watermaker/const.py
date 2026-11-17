@@ -31,6 +31,12 @@ FILL_MIN_HOURS = 0.5
 FILL_MAX_HOURS = 5.0  # longest duration the start service/device path accepts
 FILL_CAPACITY_ATTR = "capacity_liters"  # optional attribute on the fill level sensor
 FILL_RATE_HISTORY_RUNS = 5  # recent runs used to estimate L/h
+# Start-up salinity retry: the controller checks product salinity ~60 s into a
+# run and aborts ("Salinity exceeds maximum limit. Probe failed!") while water
+# that sat in the product line overnight (~1150 ppm) is still clearing. A single
+# immediate restart passes (it starts at ~750 ppm). Only errors this early retry.
+STARTUP_RETRY_MAX_MINUTES = 2.5
+STARTUP_RETRY_DELAY_SEC = 3.0
 FILL_LEVEL_EMA_ALPHA = 0.1  # smoothing of the (noisy) fill sensor for projections
 
 # WebSocket

@@ -106,7 +106,7 @@ The integration fires `spectra_watermaker_event` events for all key lifecycle mo
 | `run_completed` | Run finishes (enters flush) | `duration_minutes`, `liters_produced`, `stop_reason`, `target_percent`, `fill_level_pct`, tank levels before and after |
 | `target_reached` | Fill level held at the target — stopping | `target_percent`, `fill_level_pct` |
 | `target_already_reached` | Fill-to-target start refused (already at target) | `target_percent`, `fill_level_pct` |
-| `run_error` | Fatal error stops run | `error_page`, `error_message`, `duration_minutes` |
+| `run_error` | Fatal error stops run | `error_page`, `error_message`, `duration_minutes`, `will_retry` |
 | `warning` | Non-fatal prompt auto-dismissed mid-run | `page`, `message` |
 | `anomaly` | Sensor value out of bounds | `metric`, `value`, `expected_min`, `expected_max`, `possible_causes`, `phase` |
 | `prompt_dismissed` | Boot prompt auto-dismissed | `page`, `message` |
@@ -350,7 +350,7 @@ logger:
 - **Cannot connect during setup** — Ensure the watermaker is powered on and the Spectra Connect module is on your network. Try accessing `http://<IP>` in a browser.
 - **State stuck on "booting"** — The watermaker may be showing a prompt that needs dismissal. Check the Spectra web interface.
 - **Tank auto-stop not firing** — Verify your tank sensors are reporting values in percent (0–100). Check the threshold setting.
-- **Salinity error on cold start** — Normal for the first 1-2 minutes. The integration dismisses the error and stops the post-error flush. If it persists, check membrane condition or salinity probe.
+- **Salinity error on cold start** — After the unit sits for a while, water left in the product line reads ~1150 ppm, and the controller aborts about 60 s into the run ("Salinity exceeds maximum limit. Probe failed!") while that water is still clearing. The timing isn't adjustable on the unit. The integration dismisses the error, stops the post-error flush and restarts once with the same request (duration or fill target); `run_error` then has `will_retry: true`. It retries only errors within the first 2.5 minutes, and only once. If the retry fails too, check membrane condition or the salinity probe.
 
 ## Contributing
 
