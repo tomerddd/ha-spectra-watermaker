@@ -37,6 +37,11 @@ FILL_RATE_HISTORY_RUNS = 5  # recent runs used to estimate L/h
 # immediate restart passes (it starts at ~750 ppm). Only errors this early retry.
 STARTUP_RETRY_MAX_MINUTES = 2.5
 STARTUP_RETRY_DELAY_SEC = 3.0
+# Liter integration: longest gap between flow samples credited at the last rate
+FLOW_MAX_GAP_SEC = 5.0
+# Runs recorded before 0.9.22 counted ~0.715 of the real liters (assumed 1
+# flow sample/s, real rate ~0.72/s; measured on 4 runs 2026-11-18..21).
+LEGACY_LITERS_FACTOR = 1 / 0.715
 FILL_LEVEL_EMA_ALPHA = 0.1  # smoothing of the (noisy) fill sensor for projections
 
 # WebSocket

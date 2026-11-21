@@ -17,6 +17,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .client import SpectraClient
 from .const import (
+    LEGACY_LITERS_FACTOR,
+    FLOW_MAX_GAP_SEC,
     ANOMALY_STARTUP_SKIP_SEC,
     ANOMALY_FLUSH_SKIP_SEC,
     CONF_AUTO_OFF_DELAY,
@@ -74,6 +76,17 @@ _PPM_POST_TOGGLE_DELAY = 30.0
 # How long with both WS down before going to error state
 _BOTH_DOWN_TIMEOUT = 30.0
 
+
+
+def _flow_dt(last_t: float) -> float:
+    """Seconds since the previous flow sample, for liter integration.
+
+    First sample counts as 1 s; gaps (e.g. a reconnect) are capped at
+    FLOW_MAX_GAP_SEC so a stale reading isn't stretched over the outage.
+    """
+    if not last_t:
+        return 1.0
+    return min(max(time.monotonic() - last_t, 0.0), FLOW_MAX_GAP_SEC)
 
 class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator for Spectra Watermaker.
@@ -137,6 +150,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._run_liters: float = 0.0
         self._last_saved_liters: float = 0.0
         self._last_incremental_save: float = 0.0
+        self._run_flow_last_t: float = 0.0
         self._run_ppm_samples: list[float] = []
         self._run_pressure_samples: list[float] = []
         self._run_temp_samples: list[float] = []
@@ -188,6 +202,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._flush_flow_samples: list[float] = []
         self._flush_liters: float = 0.0
         self._flush_start_time: float = 0.0
+        self._flush_flow_last_t: float = 0.0
         self._run_power_samples: list[float] = []
         self._flush_power_samples: list[float] = []
         self._flush_start_tank_port: float | None = None
@@ -1069,7 +1084,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _recent_production_lph(self) -> float:
         """Average liters/hour delivered to the tank over recent real runs."""
         rates = [
-            r.liters_produced / (r.duration_minutes / 60)
+            r.liters_produced
+            * (1.0 if r.liters_timed else LEGACY_LITERS_FACTOR)
+            / (r.duration_minutes / 60)
             for r in self._history.runs
             if str(r.stop_reason) != StopReason.ERROR
             and r.duration_minutes >= 20
@@ -1361,6 +1378,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._flush_flow_samples = []
             self._flush_liters = 0.0
             self._flush_start_time = time.monotonic()
+            self._flush_flow_last_t = 0.0
             self._flush_start_tank_port = self._get_tank_level(self._tank_port)
             self._flush_start_tank_stbd = self._get_tank_level(self._tank_stbd)
             self._fired_anomalies = set()
@@ -1430,6 +1448,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._run_liters = 0.0
         self._last_saved_liters = 0.0
         self._last_incremental_save = time.monotonic()
+        self._run_flow_last_t = 0.0
         self._run_ppm_samples = []
         self._run_pressure_samples = []
         self._run_temp_samples = []
@@ -1512,6 +1531,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             end_time=end_time.isoformat(),
             duration_minutes=round(duration_minutes, 1),
             liters_produced=round(self._run_liters, 1),
+            liters_timed=True,
             time_to_fill_seconds=(
                 round(self._time_to_fill, 0) if self._time_to_fill is not None else None
             ),
@@ -1604,10 +1624,13 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if power is not None and power > 5:
             self._run_power_samples.append(power)
 
-        # Accumulate liters: only while toggle_tank == 0 (filling tank)
+        # Accumulate liters: only while toggle_tank == 0 (filling tank).
+        # Integrate over the real time between samples: updates arrive at
+        # ~0.7/s, so assuming 1/s undercounted by ~28% (before 0.9.22).
+        dt = _flow_dt(self._run_flow_last_t)
+        self._run_flow_last_t = time.monotonic()
         if self._ui_state.toggle_tank == "0" and data.product_flow_gph > 0:
-            # ~1 sample/sec, so liters = flow_lph / 3600
-            self._run_liters += data.product_flow_lph / 3600
+            self._run_liters += data.product_flow_lph * dt / 3600
 
         # Incremental save every 60s so liters aren't lost on crash/disconnect
         now = time.monotonic()
@@ -1677,8 +1700,11 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._flush_pressure_samples.append(data.feed_pressure_psi)
         if data.product_flow_gph > 0:
             self._flush_flow_samples.append(data.product_flow_gph)
-            # Estimate liters used for flush (~1 sample/sec)
-            self._flush_liters += data.product_flow_lph / 3600
+        # Liters used for flush, integrated over real time between samples
+        dt = _flow_dt(self._flush_flow_last_t)
+        self._flush_flow_last_t = time.monotonic()
+        if data.product_flow_gph > 0:
+            self._flush_liters += data.product_flow_lph * dt / 3600
 
     def _on_flush_complete(self) -> None:
         """Handle flush completion."""

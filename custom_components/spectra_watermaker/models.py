@@ -202,6 +202,9 @@ class RunRecord:
     stop_reason: str = StopReason.MANUAL
     data_incomplete: bool = False
     avg_power_watts: float | None = None
+    # True when liters were integrated over real sample time (0.9.22+);
+    # older records undercount by ~28% (see LEGACY_LITERS_FACTOR).
+    liters_timed: bool = False
 
     def to_dict(self) -> dict:
         """Serialize to dict for storage."""
@@ -219,6 +222,7 @@ class RunRecord:
             "stop_reason": self.stop_reason,
             "data_incomplete": self.data_incomplete,
             "avg_power_watts": self.avg_power_watts,
+            "liters_timed": self.liters_timed,
         }
 
     @classmethod
@@ -238,6 +242,7 @@ class RunRecord:
             stop_reason=data.get("stop_reason", StopReason.MANUAL),
             data_incomplete=data.get("data_incomplete", False),
             avg_power_watts=data.get("avg_power_watts"),
+            liters_timed=data.get("liters_timed", False),
         )
 
 
