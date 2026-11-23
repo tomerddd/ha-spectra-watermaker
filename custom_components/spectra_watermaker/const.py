@@ -11,6 +11,10 @@ CONF_TANK_SENSOR_STBD = "tank_sensor_stbd"
 CONF_TANK_FULL_THRESHOLD = "tank_full_threshold"
 CONF_AUTO_OFF_DELAY = "auto_off_delay"
 CONF_FILL_LEVEL_SENSOR = "fill_level_sensor"
+# Multiplier on the device's product flow (its pulses/L setting can be off and
+# isn't editable from the dealer menu). 1.0 = trust the device.
+CONF_PRODUCT_FLOW_FACTOR = "product_flow_factor"
+DEFAULT_PRODUCT_FLOW_FACTOR = 1.0
 
 # Defaults
 DEFAULT_WS_UI_PORT = 9000

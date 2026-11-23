@@ -17,7 +17,8 @@ Tested with the **Spectra Newport 1000**. Should work with other Spectra models 
 - **Water destination** — filling tank vs. diverting overboard
 - **Flush countdown** — remaining time during post-run freshwater flush
 - **Elapsed & remaining time** — for timed runs
-- **Live run liters** — real-time liters produced during the current run. Integrated over the real time between flow samples (0.9.22). Earlier versions assumed one sample per second and undercounted by ~28%; run-history records from before 0.9.22 are scaled up when estimating fill rates, but stored totals were not rewritten
+- **Live run liters** — real-time liters produced during the current run. Integrated over the real time between flow samples (0.9.22). Earlier versions assumed one sample per second and undercounted by ~28%; run-history records from before 0.9.22 are scaled up when estimating fill rates, but stored totals were not rewritten.
+- **Product flow correction** (option, 0.9.23) — multiplier on the product flow the unit reports, for units whose flow sensor calibration (pulses/L) is off and can't be changed from the dealer menu. Applies to flow, liters and fill-rate estimates; run records remember the factor they were made with, and the charcoal flush-flow baseline is rescaled when it changes
 
 ### Control
 - **Start / Stop** — fill tank, autofill (liters or hours), and stop via HA services or dashboard buttons

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import math
 import re
+import dataclasses
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -17,6 +18,8 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .client import SpectraClient
 from .const import (
+    CONF_PRODUCT_FLOW_FACTOR,
+    DEFAULT_PRODUCT_FLOW_FACTOR,
     LEGACY_LITERS_FACTOR,
     FLOW_MAX_GAP_SEC,
     ANOMALY_STARTUP_SKIP_SEC,
@@ -121,6 +124,9 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._auto_off_minutes: int = int(entry.options.get(
             CONF_AUTO_OFF_DELAY, DEFAULT_AUTO_OFF_MINUTES
+        ))
+        self._flow_factor: float = float(entry.options.get(
+            CONF_PRODUCT_FLOW_FACTOR, DEFAULT_PRODUCT_FLOW_FACTOR
         ))
 
         # Protocol layer
@@ -643,6 +649,23 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._storage.fill_target is not None:
             self._fill_target = self._storage.fill_target
 
+        # Keep the stored flush-flow baseline in the units of the current
+        # product flow factor, so charcoal health doesn't jump when it changes.
+        old_factor = self._storage.flow_factor
+        if old_factor != self._flow_factor:
+            base = self._storage.charcoal_baseline_flush_flow
+            if base is not None:
+                self._storage.charcoal_baseline_flush_flow = round(
+                    base * self._flow_factor / (old_factor or 1.0), 1
+                )
+            _LOGGER.info(
+                "Product flow factor %s -> %s; charcoal flush-flow baseline %s -> %s",
+                old_factor, self._flow_factor, base,
+                self._storage.charcoal_baseline_flush_flow,
+            )
+            self._storage.flow_factor = self._flow_factor
+            await self._storage.async_save()
+
         # Determine initial state based on power switch
         if self._power_switch:
             power_state = self.hass.states.get(self._power_switch)
@@ -935,6 +958,10 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _on_data_message(self, data: SpectraData) -> None:
         """Handle port 9001 data message."""
+        if self._flow_factor != 1.0:
+            data = dataclasses.replace(
+                data, product_flow_gph=round(data.product_flow_gph * self._flow_factor, 2)
+            )
         old_data = self._data
         self._data = data
         self._last_data_time = time.monotonic()
@@ -1086,6 +1113,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         rates = [
             r.liters_produced
             * (1.0 if r.liters_timed else LEGACY_LITERS_FACTOR)
+            * (self._flow_factor / (r.flow_factor or 1.0))
             / (r.duration_minutes / 60)
             for r in self._history.runs
             if str(r.stop_reason) != StopReason.ERROR
@@ -1532,6 +1560,7 @@ class SpectraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             duration_minutes=round(duration_minutes, 1),
             liters_produced=round(self._run_liters, 1),
             liters_timed=True,
+            flow_factor=self._flow_factor,
             time_to_fill_seconds=(
                 round(self._time_to_fill, 0) if self._time_to_fill is not None else None
             ),

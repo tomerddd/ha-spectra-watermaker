@@ -50,6 +50,7 @@
           "tank_sensor_stbd": "Starboard tank level sensor",
           "tank_full_threshold": "Tank full auto-stop threshold",
           "auto_off_delay": "Auto power-off delay",
+          "product_flow_factor": "Product flow correction",
           "fill_level_sensor": "Fill level sensor (for fill-to-target runs)"
         },
         "data_description": {
@@ -59,6 +60,7 @@
           "tank_sensor_stbd": "Sensor providing starboard tank level as a percentage",
           "tank_full_threshold": "Stop the watermaker when any tank reaches this level for 30 seconds",
           "auto_off_delay": "Minutes to wait after idle before turning off the outlet. Set to 0 to disable.",
+          "product_flow_factor": "Multiplier on the product flow the unit reports (1.0 = as reported). Use it when a measured flow (bucket test, flow meter) disagrees with the unit. Applies to flow, liters and fill-rate estimates.",
           "fill_level_sensor": "Optional. One sensor giving the level (%) of the tank(s) the watermaker fills, e.g. a template over the in-service tanks. Enables fill-to-target runs. Add a capacity_liters attribute for a tighter run-time safety cap."
         }
       }

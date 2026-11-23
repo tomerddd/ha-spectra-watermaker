@@ -21,6 +21,8 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_AUTO_OFF_DELAY,
+    CONF_PRODUCT_FLOW_FACTOR,
+    DEFAULT_PRODUCT_FLOW_FACTOR,
     CONF_FILL_LEVEL_SENSOR,
     CONF_HOST,
     CONF_POWER_SENSOR,
@@ -195,6 +197,9 @@ class SpectraWatermakerOptionsFlow(OptionsFlow):
                 CONF_AUTO_OFF_DELAY: user_input.get(
                     CONF_AUTO_OFF_DELAY, DEFAULT_AUTO_OFF_MINUTES
                 ),
+                CONF_PRODUCT_FLOW_FACTOR: user_input.get(
+                    CONF_PRODUCT_FLOW_FACTOR, DEFAULT_PRODUCT_FLOW_FACTOR
+                ),
             }
             return self.async_create_entry(title="", data=options)
 
@@ -264,6 +269,19 @@ class SpectraWatermakerOptionsFlow(OptionsFlow):
                             step=1,
                             unit_of_measurement="min",
                             mode="slider",
+                        ),
+                    ),
+                    vol.Optional(
+                        CONF_PRODUCT_FLOW_FACTOR,
+                        default=current_opts.get(
+                            CONF_PRODUCT_FLOW_FACTOR, DEFAULT_PRODUCT_FLOW_FACTOR
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0.5,
+                            max=2.0,
+                            step=0.01,
+                            mode="box",
                         ),
                     ),
                 }

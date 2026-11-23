@@ -205,6 +205,8 @@ class RunRecord:
     # True when liters were integrated over real sample time (0.9.22+);
     # older records undercount by ~28% (see LEGACY_LITERS_FACTOR).
     liters_timed: bool = False
+    # Product flow correction factor in effect when this run was recorded.
+    flow_factor: float = 1.0
 
     def to_dict(self) -> dict:
         """Serialize to dict for storage."""
@@ -223,6 +225,7 @@ class RunRecord:
             "data_incomplete": self.data_incomplete,
             "avg_power_watts": self.avg_power_watts,
             "liters_timed": self.liters_timed,
+            "flow_factor": self.flow_factor,
         }
 
     @classmethod
@@ -243,6 +246,7 @@ class RunRecord:
             data_incomplete=data.get("data_incomplete", False),
             avg_power_watts=data.get("avg_power_watts"),
             liters_timed=data.get("liters_timed", False),
+            flow_factor=data.get("flow_factor", 1.0),
         )
 
 

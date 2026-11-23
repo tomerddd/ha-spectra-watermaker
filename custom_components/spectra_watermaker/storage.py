@@ -122,6 +122,15 @@ class SpectraStorage:
         self._data["fill_target"] = value
 
     @property
+    def flow_factor(self) -> float:
+        """Product flow factor the stored flow baselines are expressed in."""
+        return self._data.get("flow_factor", 1.0)
+
+    @flow_factor.setter
+    def flow_factor(self, value: float) -> None:
+        self._data["flow_factor"] = value
+
+    @property
     def tank_full_threshold(self) -> float | None:
         """Persisted tank full auto-stop threshold percentage (None means use config default)."""
         return self._data.get("tank_full_threshold")
